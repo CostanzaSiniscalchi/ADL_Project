@@ -43,20 +43,22 @@ loris_scan_types = [
 
 # Set the list of visit labels available for download
 loris_visit_labels = [
-    'PREBL00', 'PREFU12', 'PREFU24'
+    # 'PREBL00', 'PREFU12', 'PREFU24', 
+    'NAPBL00', 'NAPFU12', 'NAPFU24'
 ]
 
 # Set the default download to be the BIDS dataset
 downloadtype = 'bids'
 
 # Will store the dataset will be downloaded
-outputdir = 'data_3'
+outputdir = 'data_non_AD_3_scans'
 
 # Will store the list of requested modalities if user does not want to download everything
 requested_modalities = 't1w'
 
 # Will store the list of requested visits if user does not want to download everything
-requested_visit_labels = "PREBL00,PREFU12,PREFU24"
+requested_visit_labels = "NAPBL00,NAPFU12,NAPFU24"
+#PREBL00,PREFU12,PREFU24,
 
 # Set the description and options for the script
 # Set the description and options for the script
