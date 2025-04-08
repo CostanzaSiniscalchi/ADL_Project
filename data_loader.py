@@ -99,6 +99,70 @@ class MRIDataLoader:
         return {"labels": torch.tensor(label, dtype=torch.long), "numpy": torch.tensor(numpy_data, dtype=torch.float32)}
 
 
+class EmbeddedMRIDataLoader:
+    def __init__(self, numpy_dir, id_list, random_order=True, transform=None):
+        self.numpy_dir = numpy_dir
+        self.transform = transform
+        self.patient_ids = id_list
+        self.random_order = random_order
+        self.data, self.labels = self._prepare_data()
+
+    def _prepare_data(self):
+        all_data = []
+        labels = []
+        for patient_id in self.patient_ids:
+            # List the scan dates for each patient
+            numpy_files = sorted(os.listdir(
+                os.path.join(self.numpy_dir, patient_id)))
+            patient_data = []
+            patient_label = []
+            for numpy_file in numpy_files:
+                # Append MRI file path
+                patient_data.append(os.path.join(
+                    self.numpy_dir, patient_id, numpy_file))
+                # Assign the label based on the scan date
+                if 'PREBL00' in numpy_file:
+                    patient_label.append(0)
+                elif 'PREFU12' in numpy_file:
+                    patient_label.append(1)
+                else:
+                    patient_label.append(2)
+            all_data.append(patient_data)
+            labels.append(patient_label)
+
+        return all_data, labels
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        numpy_files = self.data[idx]
+
+        label = self.labels[idx]  # Get the corresponding label
+
+        if self.random_order:
+            # Shuffle the files and labels together
+            combined = list(zip(numpy_files, label))
+            random.shuffle(combined)
+            numpy_files, label = zip(*combined)  # Unzip back to separate lists
+
+        numpy_data = []
+        # Load corresponding numpy file
+        for file in numpy_files:
+            # Apply transformations if provided
+            data = np.load(file)  # Load the scan as a numpy array
+            if self.transform:
+                data = self.transform(data)  # Apply transformations
+            numpy_data.append(data)
+
+        # Stack the data for the sequence of scans
+        # Shape will be (num_scans, channels, D, H, W)
+        numpy_data = np.stack(numpy_data, axis=0)
+
+        # Return the data as a dictionary
+        return {"labels": torch.tensor(label, dtype=torch.long), "numpy": torch.tensor(numpy_data, dtype=torch.float32)}
+
+
 class AllMRIDataLoader:
     def __init__(self, numpy_dir, id_list, transform=None):
         self.numpy_dir = numpy_dir
