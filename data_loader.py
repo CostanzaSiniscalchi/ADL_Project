@@ -2,6 +2,8 @@
 
 # 80 - 10 - 10 split
 
+import itertools
+from torch.utils.data import Dataset
 from math import comb
 import torch
 from monai.transforms import Compose, ScaleIntensity, ToTensor
@@ -97,6 +99,80 @@ class MRIDataLoader:
 
         # Return the data as a dictionary
         return {"labels": torch.tensor(label, dtype=torch.long), "numpy": torch.tensor(numpy_data, dtype=torch.float32)}
+
+
+class MRISliceDataLoader(Dataset):
+    def __init__(self, numpy_dir, id_list, random_order=True, transform=None):
+        self.numpy_dir = numpy_dir
+        self.transform = transform
+        self.patient_ids = id_list
+        self.random_order = random_order
+        self.permutations = list(itertools.permutations([0, 1, 2]))
+        self.data, self.labels = self._prepare_data()
+
+    def _prepare_data(self):
+        all_data = []
+        all_labels = []
+        for patient_id in self.patient_ids:
+            scan_dates = sorted(os.listdir(
+                os.path.join(self.numpy_dir, patient_id)))
+            patient_data = []
+            scan_order = []
+            for scan_date in scan_dates:
+                numpy_file = os.path.join(
+                    self.numpy_dir, patient_id, scan_date,
+                    f"preventad_{patient_id}_{scan_date}_t1w_001_t1w-defaced_001.npy"
+                )
+                if os.path.exists(numpy_file):
+                    patient_data.append(numpy_file)
+                    if scan_date == 'PREBL00':
+                        scan_order.append(0)
+                    elif scan_date == 'PREFU12':
+                        scan_order.append(1)
+                    else:
+                        scan_order.append(2)
+
+            # Only keep samples with exactly 3 timepoints
+            if len(patient_data) == 3:
+                all_data.append(patient_data)
+                all_labels.append(scan_order)
+        return all_data, all_labels
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        numpy_files = self.data[idx]
+        true_order = self.labels[idx]
+
+        # Zip and shuffle together
+        combined = list(zip(numpy_files, true_order))
+        if self.random_order:
+            random.shuffle(combined)
+        shuffled_files, shuffled_order = zip(*combined)
+
+        # Convert the new permutation to a class label (0-5)
+        permutation_label = self.permutations.index(tuple(shuffled_order))
+
+        # Load data
+        numpy_data = []
+        for file in shuffled_files:
+            data = np.load(file)
+            if self.transform:
+                data = self.transform(data)
+            numpy_data.append(data)
+
+        # Stack into (3, D, H, W)
+        numpy_data = np.stack(numpy_data, axis=0)
+
+        # Randomly choose a slice along depth D
+        d_idx = np.random.randint(numpy_data.shape[1])
+        slices_2d = numpy_data[:, d_idx, :, :]  # Shape: (3, H, W)
+
+        return {
+            "numpy": torch.tensor(slices_2d, dtype=torch.float32),
+            "label": torch.tensor(permutation_label, dtype=torch.long)
+        }
 
 
 class EmbeddedMRIDataLoader:
