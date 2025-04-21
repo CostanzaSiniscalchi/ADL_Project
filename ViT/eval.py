@@ -11,7 +11,7 @@ import pandas as pd
 
 import sys
 sys.path.append('../')
-from data_loader import MRISliceDataLoader, MRIGenerationLoader, split_data
+from data_loader_skullstrip import MRISliceDataLoader, MRISliceGenerationDataLoader, split_data
 from models import ScanOrderViT, TemporalScanPredictor
 from eval_utils import calculate_mmd, calculate_coverage
 from train_generator import parse_model_config_from_filename
@@ -34,11 +34,11 @@ _, test_ids_gen, _ = split_data(os.listdir(data_root_gen))
 test_set_ssl = MRISliceDataLoader(data_root_ssl, test_ids_ssl, transform=transform)
 test_loader_ssl = DataLoader(test_set_ssl, batch_size=32, shuffle=False)
 
-test_set_gen = MRIGenerationLoader(data_root_gen, test_ids_gen, transform=transform)
+test_set_gen = MRISliceGenerationDataLoader(data_root_gen, test_ids_gen, transform=transform)
 test_loader_gen = DataLoader(test_set_gen, batch_size=4, shuffle=False)
 
 # === Load models ===
-model_path = "best_model_dim256_depth8_heads4_mlp256.pth"
+model_path = "best_model_dim128_depth6_heads4_mlp512.pth"
 dim, depth, heads, mlp_dim = parse_model_config_from_filename(model_path)
     
 encoder = ScanOrderViT(
@@ -84,8 +84,10 @@ print(f"Accuracy: {acc:.4f}")
 print(f"F1 Score: {f1:.4f}")
 
 # === Load generator model ===
-generator = TemporalScanPredictor(encoder).to(device)
-generator.load_state_dict(torch.load("gen_model_Adam_lr4e-04_bs16.pth"))
+generator = TemporalScanPredictor(encoder, dim = dim).to(device)
+
+
+generator.load_state_dict(torch.load("gen_model_lr2e-04_bs16.pth"))
 generator.eval()
 
 # === Evaluate generator ===
@@ -99,11 +101,10 @@ def evaluate_and_visualize(model, dataloader):
     all_pred = []
 
     lpips_metric = lpips.LPIPS(net='alex').to(device)
-
     with torch.no_grad():
         for batch in dataloader:
-            input_seq = batch["input"].to(device)
-            target = batch["target"].to(device)
+            input_seq = batch["numpy"].to(device)
+            target = batch["label"].to(device)
 
             pred = model(input_seq).clamp(0, 1)
 

@@ -281,52 +281,132 @@ class EmbeddedMRIDataLoader:
         return {"labels": torch.tensor(label, dtype=torch.long), "numpy": torch.tensor(numpy_data, dtype=torch.float32)}
 
 
-class MRIGenerationLoader(Dataset):
-    def __init__(self, root_dir, id_list, transform=None, cache_dir="stripped_cache"):
-        self.root_dir = root_dir
+
+class MRISliceGenerationDataLoader(Dataset):
+    def __init__(self, numpy_dir, id_list, transform=None, cache_dir="stripped_cache"):
+        self.numpy_dir = numpy_dir
         self.transform = transform
-        self.id_list = id_list
+        self.patient_ids = id_list
         self.cache_dir = cache_dir
+        self.num_timepoints = 5  # fixed for generation
+        os.makedirs(self.cache_dir, exist_ok=True)
         self.data = self._prepare_data()
 
     def _prepare_data(self):
-        valid_samples = []
-        for patient_id in self.id_list:
-            patient_path = os.path.join(self.root_dir, patient_id)
-            if not os.path.exists(patient_path):
+        all_data = []
+        for patient_id in self.patient_ids:
+            scan_dir = os.path.join(self.numpy_dir, patient_id)
+            if not os.path.isdir(scan_dir):
                 continue
-            timepoint_order = ['PREBL00', 'PREFU12', 'PREFU24', 'PREFU36', 'PREFU48']
-            scan_dates = sorted(os.listdir(patient_path), key=lambda x: timepoint_order.index(x))
-            patient_scans = []
-            for date in scan_dates:
-                scan_dir = os.path.join(patient_path, date)
-                npy_files = [f for f in os.listdir(scan_dir) if f.endswith('.npy')]
-                if not npy_files:
-                    continue
-                full_path = os.path.join(scan_dir, npy_files[0])
-                patient_scans.append((full_path, patient_id, date))
-            if len(patient_scans) >= 5:
-                valid_samples.append(patient_scans[:5])
-        return valid_samples
+            scan_dates = sorted(os.listdir(scan_dir))
+            scan_files = []
+
+            for scan_date in scan_dates:
+                npy_path = os.path.join(
+                    scan_dir, scan_date,
+                    f"preventad_{patient_id}_{scan_date}_t1w_001_t1w-defaced_001.npy"
+                )
+                if os.path.exists(npy_path):
+                    scan_files.append((npy_path, patient_id, scan_date))
+
+            if len(scan_files) >= self.num_timepoints:
+                all_data.append(scan_files[:self.num_timepoints])
+        return all_data
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        paths = self.data[idx]
+        scan_paths = self.data[idx]
         volumes = []
-        for file_path, patient_id, scan_date in paths:
+        for file_path, patient_id, scan_date in scan_paths:
             vol = np.load(file_path)
-            vol = skull_strip_with_bet(vol, patient_id, scan_date, self.cache_dir)
+            stripped = self.skull_strip_with_bet(vol, patient_id, scan_date)
             if self.transform:
-                vol = self.transform(vol)
-            volumes.append(vol)
-        volumes = np.stack(volumes, axis=0)
+                stripped = self.transform(stripped)
+            volumes.append(stripped)
+
+        volumes = np.stack(volumes, axis=0)  # [T=5, D, H, W]
         d_idx = np.random.randint(volumes.shape[1])
-        slice_2d = volumes[:, d_idx, :, :]
-        input_seq = slice_2d[:4]
-        target_slice = slice_2d[4]
+        slice_2d = volumes[:, d_idx, :, :]   # [5, H, W]
+        input_seq = slice_2d[:4]             # [4, H, W]
+        target = slice_2d[4]                 # [H, W]
+
         return {
-            "input": torch.tensor(input_seq).unsqueeze(1).float(),
-            "target": torch.tensor(target_slice).unsqueeze(0).float()
+            "numpy": torch.tensor(input_seq).unsqueeze(1).float(),  # [4, 1, H, W]
+            "label": torch.tensor(target).unsqueeze(0).float()     # [1, H, W]
         }
+
+    def skull_strip_with_bet(self, volume, patient_id=None, scan_date=None):
+        cache_path = os.path.join(self.cache_dir, patient_id, f"{scan_date}.npy")
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        if os.path.exists(cache_path):
+            return np.load(cache_path)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nii_path = os.path.join(tmpdir, "input.nii.gz")
+            out_path = os.path.join(tmpdir, "output.nii.gz")
+            affine = np.eye(4)
+            nib.save(nib.Nifti1Image(volume, affine), nii_path)
+            try:
+                subprocess.run(
+                    ["bet", nii_path, out_path, "-f", "0.5", "-g", "0", "-m"],
+                    check=True
+                )
+                stripped = nib.load(out_path).get_fdata().astype(np.float32)
+                np.save(cache_path, stripped)
+                return stripped
+            except subprocess.CalledProcessError:
+                print(f"BET failed for {patient_id} {scan_date}, using unstripped volume.")
+                return volume
+
+
+# class MRIGenerationLoader(Dataset):
+#     def __init__(self, root_dir, id_list, transform=None, cache_dir="stripped_cache"):
+#         self.root_dir = root_dir
+#         self.transform = transform
+#         self.id_list = id_list
+#         self.cache_dir = cache_dir
+#         self.data = self._prepare_data()
+
+#     def _prepare_data(self):
+#         valid_samples = []
+#         for patient_id in self.id_list:
+#             patient_path = os.path.join(self.root_dir, patient_id)
+#             if not os.path.exists(patient_path):
+#                 continue
+#             timepoint_order = ['PREBL00', 'PREFU12', 'PREFU24', 'PREFU36', 'PREFU48']
+#             scan_dates = sorted(os.listdir(patient_path), key=lambda x: timepoint_order.index(x))
+#             patient_scans = []
+#             for date in scan_dates:
+#                 scan_dir = os.path.join(patient_path, date)
+#                 npy_files = [f for f in os.listdir(scan_dir) if f.endswith('.npy')]
+#                 if not npy_files:
+#                     continue
+#                 full_path = os.path.join(scan_dir, npy_files[0])
+#                 patient_scans.append((full_path, patient_id, date))
+#             if len(patient_scans) >= 5:
+#                 valid_samples.append(patient_scans[:5])
+#         return valid_samples
+
+#     def __len__(self):
+#         return len(self.data)
+
+#     def __getitem__(self, idx):
+#         paths = self.data[idx]
+#         volumes = []
+#         for file_path, patient_id, scan_date in paths:
+#             vol = np.load(file_path)
+#             vol = skull_strip_with_bet(vol, patient_id, scan_date, self.cache_dir)
+#             if self.transform:
+#                 vol = self.transform(vol)
+#             volumes.append(vol)
+#         volumes = np.stack(volumes, axis=0)
+#         d_idx = np.random.randint(volumes.shape[1])
+#         slice_2d = volumes[:, d_idx, :, :]
+#         input_seq = slice_2d[:4]
+#         target_slice = slice_2d[4]
+#         return {
+#             "input": torch.tensor(input_seq).unsqueeze(1).float(),
+#             "target": torch.tensor(target_slice).unsqueeze(0).float()
+#         }

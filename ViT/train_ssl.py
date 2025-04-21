@@ -16,7 +16,7 @@ from models import ScanOrderViT
 
 import sys
 sys.path.append('../')
-from data_loader import MRISliceDataLoader, split_data
+from data_loader_skullstrip import MRISliceDataLoader, split_data
 
 
 
@@ -163,7 +163,7 @@ if __name__ == "__main__":
 
 
     study = optuna.create_study(direction="minimize")
-    study.optimize(objective, n_trials=1, show_progress_bar=True)
+    study.optimize(objective, n_trials=20, show_progress_bar=True) 
     
     print("Best hyperparameters:", study.best_trial.params)
     
