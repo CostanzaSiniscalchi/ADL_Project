@@ -235,18 +235,18 @@ def evaluate_and_visualize(model, dataloader, save_dir="data/eval_outputs"):
     print(f"MMD:     {total_mmd:.4f}")
     print(f"Coverage:{total_cov:.4f}")
 
-data_root = 'data/numpy_conversions_3_scans/'
+data_root = 'data/stripped_3_scans/'
 train_ids, test_ids, val_ids = split_data(os.listdir(data_root))
 
 train_set = MRISliceDataLoader(data_root, train_ids, transform=transform)
 val_set = MRISliceDataLoader(data_root, val_ids, transform=transform)
 
-train_set.show_stripped_example(train_ids[0])
+
 
 train_loader = DataLoader(train_set, batch_size=4, shuffle=True)
 val_loader = DataLoader(val_set, batch_size=4, shuffle=False)
 
-data_root_generation = 'data/numpy_conversions_5_scans/'
+data_root_generation = 'data/stripped_5_scans/'
 
 train_ids_generation, test_ids_generation, val_ids_generation = split_data(os.listdir(data_root_generation))
 
