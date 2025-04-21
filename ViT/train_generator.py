@@ -14,12 +14,12 @@ import pandas as pd
 
 import sys
 sys.path.append('../')
-from data_loader_skullstrip import MRISliceGenerationDataLoader, split_data
+from data_loader_skullstrip import MRIGenerationLoader, split_data
 from tqdm import tqdm
 
 
 
-def train_generator(model, dataloader, val_dataloader, optimizer, criterion, epochs=5, patience=5, scheduler = None):
+def train_generator(model, dataloader, val_dataloader, optimizer, criterion, epochs=50, patience=5, scheduler = None):
 
     best_val_loss = float('inf')
     best_model_wts = copy.deepcopy(model.state_dict())
@@ -29,8 +29,8 @@ def train_generator(model, dataloader, val_dataloader, optimizer, criterion, epo
         total_loss = 0
         model.train()
         for batch in tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}"):
-            input_seq = batch["numpy"].to(device)     # [B, 4, 1, H, W]
-            target = batch["label"].to(device)       # [B, 1, H, W]
+            input_seq = batch["input"].to(device)     # [B, 4, 1, H, W]
+            target = batch["target"].to(device)       # [B, 1, H, W]
 
             pred = model(input_seq)# → [B, 1, H, W]
             
@@ -48,8 +48,8 @@ def train_generator(model, dataloader, val_dataloader, optimizer, criterion, epo
         val_loss = 0
         with torch.no_grad():
             for batch in val_dataloader:
-                input_seq = batch["numpy"].to(device)
-                target = batch["label"].to(device)
+                input_seq = batch["input"].to(device)
+                target = batch["target"].to(device)
                 pred = model(input_seq)
                 loss = criterion(pred, target)
                 val_loss += loss.item()
@@ -89,7 +89,7 @@ def objective(trial):
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False)
 
-    model_path = "best_model_dim128_depth6_heads4_mlp512.pth"
+    model_path = "best_model_dim128_depth8_heads4_mlp256_lr4e-05_bs8_wd1e-06.pth"
     dim, depth, heads, mlp_dim = parse_model_config_from_filename(model_path)
     
     encoder = ScanOrderViT(
@@ -112,7 +112,7 @@ def objective(trial):
    
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=20)
 
-    model = train_generator(model, train_loader, val_loader, optimizer, criterion, epochs=30, patience=5, scheduler=scheduler)
+    model = train_generator(model, train_loader, val_loader, optimizer, criterion, epochs=50, patience=5, scheduler=scheduler)
 
     model_path = f"gen_model_lr{lr:.0e}_bs{batch_size}.pth"
     torch.save(model.state_dict(), model_path)
@@ -124,8 +124,8 @@ def evaluate_val_loss(model, dataloader, criterion):
     total_loss = 0
     with torch.no_grad():
         for batch in dataloader:
-            input_seq = batch["numpy"].to(device)
-            target = batch["label"].to(device)
+            input_seq = batch["input"].to(device)
+            target = batch["target"].to(device)
             pred = model(input_seq)
             loss = criterion(pred, target)
             total_loss += loss.item()
@@ -142,10 +142,10 @@ if __name__ == "__main__":
         ToTensor()
     ])
     
-    data_root = '../numpy_conversions_5_AD/'
+    data_root = '../stripped_5_scans/'
     train_ids, test_ids, val_ids = split_data(os.listdir(data_root))
-    train_set = MRISliceGenerationDataLoader(data_root, train_ids, transform=transform)
-    val_set = MRISliceGenerationDataLoader(data_root, val_ids, transform=transform)
+    train_set = MRIGenerationLoader(data_root, train_ids, transform=transform)
+    val_set = MRIGenerationLoader(data_root, val_ids, transform=transform)
         
     
     study = optuna.create_study(direction="minimize")

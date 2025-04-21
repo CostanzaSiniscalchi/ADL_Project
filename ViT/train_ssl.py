@@ -20,7 +20,7 @@ from data_loader_skullstrip import MRISliceDataLoader, split_data
 
 
 
-def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=5, patience=5, scheduler= None):
+def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50, patience=5, scheduler= None):
     model.train()
 
     best_val_loss = float('inf')
@@ -86,9 +86,9 @@ def objective(trial):
     combo = trial.suggest_categorical("arch_combo", my_arch_space)
     dim, depth, heads, mlp_dim = combo
     
-    lr = trial.suggest_float('lr', 1e-5, 1e-3, log=True)
-    weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-3, log=True)
-    batch_size = trial.suggest_categorical('batch_size', [16, 32, 64])
+    lr = trial.suggest_float('lr', 1e-5, 1e-2, log=True)
+    weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True)
+    batch_size = trial.suggest_categorical('batch_size', [4, 8, 16])
 
     print(f"\n📌 Trial {trial.number} Hyperparams:")
     print(f"  Architecture: dim={dim}, depth={depth}, heads={heads}, mlp_dim={mlp_dim}")
@@ -115,7 +115,7 @@ def objective(trial):
 
     model = train_ssl(model, train_loader, val_loader, optimizer, criterion, epochs=50, patience=5, scheduler = scheduler)
 
-    model_path = f"best_model_dim{dim}_depth{depth}_heads{heads}_mlp{mlp_dim}.pth"
+    model_path = f"best_model_dim{dim}_depth{depth}_heads{heads}_mlp{mlp_dim}_lr{lr:.0e}_bs{batch_size}_wd{weight_decay:.0e}.pth"
     torch.save(model.state_dict(), model_path)
 
     return evaluate_val_loss(model, val_loader, criterion)
@@ -143,7 +143,7 @@ if __name__ == "__main__":
         ToTensor()
     ])
     
-    data_root = '../numpy_conversions/'
+    data_root = '../stripped_3_scans/'
     train_ids, test_ids, val_ids = split_data(os.listdir(data_root))
     train_set = MRISliceDataLoader(data_root, train_ids, transform=transform)
     val_set = MRISliceDataLoader(data_root, val_ids, transform=transform)
@@ -154,7 +154,7 @@ if __name__ == "__main__":
         [4, 6, 8],           # depth
         [4, 8],              # heads
         [256, 512, 1024]     # mlp_dim
-    ))
+    )) # 54 combinations
     
     # Assign subsets to each groupmate
     group_id = 0  # change this to 0, 1, or 2
@@ -163,7 +163,7 @@ if __name__ == "__main__":
 
 
     study = optuna.create_study(direction="minimize")
-    study.optimize(objective, n_trials=20, show_progress_bar=True) 
+    study.optimize(objective, n_trials=25, show_progress_bar=True) # 18 different combinations per person (not including LR, Weight decay, BS)
     
     print("Best hyperparameters:", study.best_trial.params)
     
