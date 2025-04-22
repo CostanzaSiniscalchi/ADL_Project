@@ -67,95 +67,140 @@ class MRIDataLoader:
 
 
 class MRISliceDataLoader(Dataset):
-    def __init__(self, numpy_dir, id_list, num_timepoints=3, random_order=True, transform=None):
+    def __init__(self, numpy_dir, id_list, num_timepoints=3, transform=None, random_order=True):
         self.numpy_dir = numpy_dir
         self.transform = transform
-        self.patient_ids = id_list
-        self.random_order = random_order
         self.num_timepoints = num_timepoints
-        self.permutations = list(itertools.permutations(range(self.num_timepoints)))
-        self.data, self.labels = self._prepare_data()
+        self.random_order = random_order
+        self.middle_slice_indices = list(range(44, 132))  # 88 central slices
+        self.permutations = list(itertools.permutations(range(self.num_timepoints)))  # 6 possible permutations
+        self.examples = self._prepare_examples(id_list)
 
-    def _prepare_data(self):
-        all_data = []
-        all_labels = []
-        for patient_id in self.patient_ids:
-            scan_dir = os.path.join(self.numpy_dir, patient_id)
-            if not os.path.isdir(scan_dir):
+    def _prepare_examples(self, id_list):
+        examples = []  # Each = (ordered scan_slices [scan1, scan2, scan3], slice_index)
+        for patient_id in id_list:
+            patient_dir = os.path.join(self.numpy_dir, patient_id)
+            if not os.path.isdir(patient_dir):
                 continue
-            scan_dates = sorted(os.listdir(scan_dir))
-            patient_data = []
-            scan_order = []
 
-            for i, scan_file in enumerate(scan_dates):
-                numpy_file = os.path.join(scan_dir, scan_file)
-                if os.path.exists(numpy_file):
-                    patient_data.append(numpy_file)
-                    scan_order.append(i)
+            scan_names = sorted(os.listdir(patient_dir))  # keep temporal order
+            scan_paths = []
+            for scan_name in scan_names:
+                scan_dir = os.path.join(patient_dir, scan_name)
+                
+                if os.path.isdir(scan_dir):
+                    slices = sorted([f for f in os.listdir(scan_dir) if f.endswith(".npy")])
+                    
+                    if len(slices) == 176:
+                        scan_paths.append([os.path.join(scan_dir, f) for f in slices])
 
-            if len(patient_data) == self.num_timepoints:
-                all_data.append(patient_data)
-                all_labels.append(scan_order)
-        return all_data, all_labels
+            if len(scan_paths) == self.num_timepoints:
+                for slice_idx in self.middle_slice_indices:
+                    examples.append((scan_paths, slice_idx))  # one example = 1 slice from 3 scans
+        # print(len(examples))
+        return examples
 
     def __len__(self):
-        return len(self.data)
+        return len(self.examples)
 
     def __getitem__(self, idx):
-        numpy_files = self.data[idx]
-        true_order = self.labels[idx]
+        scan_paths, slice_idx = self.examples[idx]  # scan_paths = [scan1_slices, scan2_slices, scan3_slices]
 
-        combined = list(zip(numpy_files, true_order))
+        # Load the slice from each scan at the same index
+        ordered_slices = []
+        for scan in scan_paths:
+            slice_path  = scan[slice_idx]
+            img = np.load(slice_path)
+            img = img.astype(np.float32)
+
+            # Force it to be a 2D image for the transform
+            if img.ndim == 3:
+                if img.shape[0] == 1:
+                    img = img.squeeze(0)  # shape (H, W)
+                else:
+                    img = img[img.shape[0] // 2]  # use center slice
+
+            if self.transform:
+                img = self.transform(img)  # transform expects (H, W)
+            ordered_slices.append(img)
+
+        # Create the correct label (original order is [0, 1, 2])
+        original_order = list(range(self.num_timepoints))
+
+        # Optionally permute the order
         if self.random_order:
+            combined = list(zip(ordered_slices, original_order))
             random.shuffle(combined)
-        shuffled_files, shuffled_order = zip(*combined)
-        permutation_label = self.permutations.index(tuple(shuffled_order))
+            ordered_slices, permuted_order = zip(*combined)
+        else:
+            permuted_order = original_order
 
-        numpy_data = [self.transform(np.load(file)) if self.transform else np.load(file) for file in shuffled_files]
-        numpy_data = np.stack(numpy_data, axis=0)
-        d_idx = np.random.randint(numpy_data.shape[1])
-        slices_2d = numpy_data[:, d_idx, :, :]
-
+        # Convert permuted_order into class label (0 to 5)
+        label = self.permutations.index(tuple(permuted_order))
+        data = np.stack(ordered_slices, axis=0)  # shape: [3, H, W]
         return {
-            "numpy": torch.tensor(slices_2d, dtype=torch.float32),
-            "label": torch.tensor(permutation_label, dtype=torch.long)
+            "numpy": torch.tensor(data, dtype=torch.float32),
+            "label": torch.tensor(label, dtype=torch.long),
+            "slice_index": torch.tensor(slice_idx, dtype=torch.long)
         }
-
-
 class MRIGenerationLoader(Dataset):
     def __init__(self, root_dir, id_list, transform=None):
         self.root_dir = root_dir
         self.transform = transform
-        self.id_list = id_list
-        self.data = self._prepare_data()
+        self.middle_slice_indices = list(range(44, 132))  # 88 slices
+        self.examples = self._prepare_data(id_list)
 
-    def _prepare_data(self):
-        valid_samples = []
-        for patient_id in self.id_list:
+    def _prepare_data(self, id_list):
+        examples = []
+        for patient_id in id_list:
             patient_path = os.path.join(self.root_dir, patient_id)
-            if not os.path.exists(patient_path):
+            if not os.path.isdir(patient_path):
                 continue
-            scan_files = sorted([f for f in os.listdir(patient_path) if f.endswith('.npy')])
-            patient_scans = []
-            for scan_file in scan_files:
-                full_path = os.path.join(patient_path, scan_file)
-                patient_scans.append(full_path)
-            if len(patient_scans) >= 5:
-                valid_samples.append(patient_scans[:5])
-        return valid_samples
+
+            scan_names = sorted(os.listdir(patient_path))  # e.g., scan1, scan2, ..., scan5
+            scan_paths = []
+            for scan_name in scan_names:
+                scan_dir = os.path.join(patient_path, scan_name)
+                if os.path.isdir(scan_dir):
+                    slice_files = sorted([f for f in os.listdir(scan_dir) if f.endswith(".npy")])
+                    if len(slice_files) == 176:
+                        scan_paths.append([os.path.join(scan_dir, f) for f in slice_files])
+
+            if len(scan_paths) >= 5:
+                for slice_idx in self.middle_slice_indices:
+                    examples.append((scan_paths[:5], slice_idx))  # Use first 5 scans
+        return examples
 
     def __len__(self):
-        return len(self.data)
+        return len(self.examples)
 
     def __getitem__(self, idx):
-        paths = self.data[idx]
-        volumes = [self.transform(np.load(file)) if self.transform else np.load(file) for file in paths]
-        volumes = np.stack(volumes, axis=0)
-        d_idx = np.random.randint(volumes.shape[1])
-        slice_2d = volumes[:, d_idx, :, :]
-        input_seq = slice_2d[:4]
-        target_slice = slice_2d[4]
+        scan_paths, slice_idx = self.examples[idx]  # scan_paths = list of 5 scan_slices
+
+        # Load all 5 slices at the same index
+        slices = []
+        for scan in scan_paths:
+            slice_path  = scan[slice_idx]
+            img = np.load(slice_path)
+            img = img.astype(np.float32)
+
+            # Force it to be a 2D image for the transform
+            if img.ndim == 3:
+                if img.shape[0] == 1:
+                    img = img.squeeze(0)  # shape (H, W)
+                else:
+                    img = img[img.shape[0] // 2]  # use center slice
+
+            if self.transform:
+                img = self.transform(img)  # transform expects (H, W)
+            slices.append(img)
+
+        slices = np.stack(slices, axis=0)  # Shape: [5, H, W]
+
+        input_seq = slices[:4]  # First 4 as input
+        target_slice = slices[4]  # 5th as target
+
         return {
-            "input": torch.tensor(input_seq).unsqueeze(1).float(),
-            "target": torch.tensor(target_slice).unsqueeze(0).float()
+            "input": torch.tensor(input_seq).unsqueeze(1).float(),   # Shape: [4, 1, H, W]
+            "target": torch.tensor(target_slice).unsqueeze(0).float()  # Shape: [1, H, W]
         }

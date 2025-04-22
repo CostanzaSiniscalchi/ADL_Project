@@ -20,9 +20,11 @@ image_size = 224
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 transform = Compose([
+    lambda x: x[np.newaxis, ...],
     ScaleIntensity(),
     Resize((224, 224)),   # <-- force 224x224
-    ToTensor()
+    ToTensor(),
+    lambda x: x.squeeze(0) 
 ])
 lpips_metric = lpips.LPIPS(net='alex')
 
@@ -235,7 +237,7 @@ def evaluate_and_visualize(model, dataloader, save_dir="data/eval_outputs"):
     print(f"MMD:     {total_mmd:.4f}")
     print(f"Coverage:{total_cov:.4f}")
 
-data_root = 'data/stripped_3_scans/'
+data_root = 'data/stripped_3_scans_slices/'
 train_ids, test_ids, val_ids = split_data(os.listdir(data_root))
 
 train_set = MRISliceDataLoader(data_root, train_ids, transform=transform)
@@ -246,7 +248,7 @@ val_set = MRISliceDataLoader(data_root, val_ids, transform=transform)
 train_loader = DataLoader(train_set, batch_size=4, shuffle=True)
 val_loader = DataLoader(val_set, batch_size=4, shuffle=False)
 
-data_root_generation = 'data/stripped_5_scans/'
+data_root_generation = 'data/stripped_5_scans_slices/'
 
 train_ids_generation, test_ids_generation, val_ids_generation = split_data(os.listdir(data_root_generation))
 
