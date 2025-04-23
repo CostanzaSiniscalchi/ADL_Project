@@ -8,12 +8,14 @@ import lpips
 from piq import ssim, multi_scale_ssim
 from sklearn.metrics import accuracy_score, f1_score
 import pandas as pd
+import torch.nn.functional as F
+
 
 import sys
 sys.path.append('../')
 from data_loader_skullstrip import MRISliceDataLoader, MRIGenerationLoader, split_data
 from models import ScanOrderViT, TemporalScanPredictor
-from eval_utils import calculate_mmd, calculate_coverage
+from eval_utils import calculate_mmd, calculate_coverage, calculate_fid, calculate_kid
 from train_generator import parse_model_config_from_filename
 
 transform = Compose([
@@ -22,11 +24,12 @@ transform = Compose([
     ToTensor()
 ])
 
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # === Load test sets ===
-data_root_ssl = '../stripped_3_scans/'
-data_root_gen = '../stripped_5_scans/'
+data_root_ssl = '../stripped_3_scans_slices/'
+data_root_gen = '../stripped_5_scans_slices/'
 
 _, test_ids_ssl, _ = split_data(os.listdir(data_root_ssl))
 _, test_ids_gen, _ = split_data(os.listdir(data_root_gen))
@@ -90,6 +93,11 @@ generator = TemporalScanPredictor(encoder, dim = dim).to(device)
 generator.load_state_dict(torch.load("gen_model_lr4e-04_bs4.pth"))
 generator.eval()
 
+def preprocess_for_kid(x):
+        # x: [B, 1, H, W] → [B, 3, 299, 299]
+        return F.interpolate(x.repeat(1, 3, 1, 1), size=(299, 299), mode='bilinear', align_corners=False)
+
+
 # === Evaluate generator ===
 def evaluate_and_visualize(model, dataloader):
     model.eval()
@@ -101,6 +109,7 @@ def evaluate_and_visualize(model, dataloader):
     all_pred = []
 
     lpips_metric = lpips.LPIPS(net='alex').to(device)
+
     with torch.no_grad():
         for batch in dataloader:
             input_seq = batch["input"].to(device)
@@ -129,13 +138,19 @@ def evaluate_and_visualize(model, dataloader):
 
             all_real.append(target.view(B, -1).cpu())
             all_pred.append(pred.view(B, -1).cpu())
+
+            
             num_batches += 1
 
     all_real_flat = torch.cat(all_real, dim=0)
     all_pred_flat = torch.cat(all_pred, dim=0)
 
+    real_imgs = torch.cat(all_real_imgs).to(device)
+    pred_imgs = torch.cat(all_pred_imgs).to(device)
+
     total_mmd = calculate_mmd(all_real_flat, all_pred_flat)
     total_cov = calculate_coverage(all_real_flat.numpy(), all_pred_flat.numpy())
+    
 
     print(f"\n\U0001F4CA Generator Metrics Across {num_batches} Batches")
     print(f"MS-SSIM: {total_msssim / num_batches:.4f}")
@@ -143,6 +158,7 @@ def evaluate_and_visualize(model, dataloader):
     print(f"LPIPS:   {total_lpips / num_batches:.4f}")
     print(f"MMD:     {total_mmd:.4f}")
     print(f"Coverage:{total_cov:.4f}")
+    
 
 # === Run generator evaluation ===
 evaluate_and_visualize(generator, test_loader_gen)

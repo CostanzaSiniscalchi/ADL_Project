@@ -84,7 +84,7 @@ def parse_model_config_from_filename(filename):
 
 def objective(trial):
     lr = trial.suggest_float('lr', 1e-5, 1e-3, log=True)
-    batch_size = trial.suggest_categorical('batch_size', [4, 8, 16])
+    batch_size = trial.suggest_categorical('batch_size', [1])
 
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False)
@@ -142,7 +142,7 @@ if __name__ == "__main__":
         ToTensor()
     ])
     
-    data_root = '../stripped_5_scans/'
+    data_root = '../stripped_5_scans_slices/'
     train_ids, test_ids, val_ids = split_data(os.listdir(data_root))
     train_set = MRIGenerationLoader(data_root, train_ids, transform=transform)
     val_set = MRIGenerationLoader(data_root, val_ids, transform=transform)

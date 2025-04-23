@@ -88,7 +88,7 @@ def objective(trial):
     
     lr = trial.suggest_float('lr', 1e-5, 1e-2, log=True)
     weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True)
-    batch_size = trial.suggest_categorical('batch_size', [4, 8, 16])
+    batch_size = trial.suggest_categorical('batch_size', [1])
 
     print(f"\n📌 Trial {trial.number} Hyperparams:")
     print(f"  Architecture: dim={dim}, depth={depth}, heads={heads}, mlp_dim={mlp_dim}")
@@ -142,8 +142,10 @@ if __name__ == "__main__":
         Resize((image_size, image_size)),
         ToTensor()
     ])
+
+  
     
-    data_root = '../stripped_3_scans/'
+    data_root = '../stripped_3_scans_slices/'
     train_ids, test_ids, val_ids = split_data(os.listdir(data_root))
     train_set = MRISliceDataLoader(data_root, train_ids, transform=transform)
     val_set = MRISliceDataLoader(data_root, val_ids, transform=transform)

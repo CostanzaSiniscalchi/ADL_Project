@@ -10,6 +10,8 @@ import lpips
 from torchmetrics.image.kid import KernelInceptionDistance
 from typing import Tuple
 import numpy as np
+from scipy import linalg
+
 
 
 
@@ -26,7 +28,9 @@ def calculate_fid(real_features: torch.Tensor, gen_features: torch.Tensor) -> fl
 
 
 def calculate_kid(real_images: torch.Tensor, gen_images: torch.Tensor) -> Tuple[float, float]:
-    kid = KernelInceptionDistance(subset_size=50)
+    real_images = (real_images * 255).clamp(0, 255).to(torch.uint8)
+    gen_images = (gen_images * 255).clamp(0, 255).to(torch.uint8)
+    kid = KernelInceptionDistance(subset_size=1)
     kid.update(real_images, real=True)
     kid.update(gen_images, real=False)
     return kid.compute()
