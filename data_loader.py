@@ -292,7 +292,6 @@ class AllMRIDataLoader:
         return {"file_names": file_names, "numpy": torch.tensor(numpy_data, dtype=torch.float32), "patient_id": patient_id}
 
 
-
 class MRIGenerationLoader(Dataset):
     def __init__(self, root_dir, id_list, transform=None):
         self.root_dir = root_dir
@@ -306,25 +305,27 @@ class MRIGenerationLoader(Dataset):
             patient_path = os.path.join(self.root_dir, patient_id)
             if not os.path.exists(patient_path):
                 continue
-    
-            timepoint_order = ['PREBL00', 'PREFU12', 'PREFU24', 'PREFU36', 'PREFU48']
-            scan_dates = sorted(os.listdir(patient_path), key=lambda x: timepoint_order.index(x))
+
+            timepoint_order = ['PREBL00', 'PREFU12',
+                               'PREFU24', 'PREFU36', 'PREFU48']
+            scan_dates = sorted(os.listdir(patient_path),
+                                key=lambda x: timepoint_order.index(x))
 
             patient_scans = []
-    
+
             for date in scan_dates:
                 scan_dir = os.path.join(patient_path, date)
-                npy_files = [f for f in os.listdir(scan_dir) if f.endswith('.npy')]
+                npy_files = [f for f in os.listdir(
+                    scan_dir) if f.endswith('.npy')]
                 if not npy_files:
                     continue
                 full_path = os.path.join(scan_dir, npy_files[0])
                 patient_scans.append(full_path)
-    
+
             if len(patient_scans) >= 5:
                 valid_samples.append(patient_scans[:5])  # T0–T4
-    
-        return valid_samples
 
+        return valid_samples
 
     def __len__(self):
         return len(self.data)
@@ -344,7 +345,8 @@ class MRIGenerationLoader(Dataset):
         target_slice = slice_2d[4]    # [H, W]
 
         return {
-            "input": torch.tensor(input_seq).unsqueeze(1).float(),  # [4, 1, H, W]
-            "target": torch.tensor(target_slice).unsqueeze(0).float()  # [1, H, W]
+            # [4, 1, H, W]
+            "input": torch.tensor(input_seq).unsqueeze(1).float(),
+            # [1, H, W]
+            "target": torch.tensor(target_slice).unsqueeze(0).float()
         }
-

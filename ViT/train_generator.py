@@ -1,3 +1,5 @@
+import numpy as np
+from tqdm import tqdm
 import os
 import optuna
 import torch
@@ -15,11 +17,9 @@ import pandas as pd
 import sys
 sys.path.append('../')
 from data_loader_skullstrip import MRIGenerationLoader, split_data
-from tqdm import tqdm
 
 
-
-def train_generator(model, dataloader, val_dataloader, optimizer, criterion, epochs=50, patience=5, scheduler = None):
+def train_generator(model, dataloader, val_dataloader, optimizer, criterion, epochs=50, patience=5, scheduler=None):
 
     best_val_loss = float('inf')
     best_model_wts = copy.deepcopy(model.state_dict())
@@ -32,8 +32,8 @@ def train_generator(model, dataloader, val_dataloader, optimizer, criterion, epo
             input_seq = batch["input"].to(device)     # [B, 4, 1, H, W]
             target = batch["target"].to(device)       # [B, 1, H, W]
 
-            pred = model(input_seq)# → [B, 1, H, W]
-            
+            pred = model(input_seq)  # → [B, 1, H, W]
+
             loss = criterion(pred, target)
 
             optimizer.zero_grad()
@@ -55,7 +55,8 @@ def train_generator(model, dataloader, val_dataloader, optimizer, criterion, epo
                 val_loss += loss.item()
         avg_val_loss = val_loss / len(val_dataloader)
 
-        print(f"[GEN] Epoch {epoch+1} - Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+        print(
+            f"[GEN] Epoch {epoch+1} - Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
 
         if scheduler is not None:
             scheduler.step()
@@ -75,12 +76,14 @@ def train_generator(model, dataloader, val_dataloader, optimizer, criterion, epo
     model.load_state_dict(best_model_wts)
     return model
 
+
 def parse_model_config_from_filename(filename):
     match = re.search(r'dim(\d+)_depth(\d+)_heads(\d+)_mlp(\d+)', filename)
     if not match:
         raise ValueError(f"Could not parse model config from {filename}")
     dim, depth, heads, mlp_dim = map(int, match.groups())
     return dim, depth, heads, mlp_dim
+
 
 def objective(trial):
     lr = trial.suggest_float('lr', 1e-5, 1e-3, log=True)
@@ -91,7 +94,7 @@ def objective(trial):
 
     model_path = "best_model_dim128_depth8_heads4_mlp256_lr4e-05_bs8_wd1e-06.pth"
     dim, depth, heads, mlp_dim = parse_model_config_from_filename(model_path)
-    
+
     encoder = ScanOrderViT(
         image_size=224,
         dim=dim,
@@ -100,24 +103,26 @@ def objective(trial):
         mlp_dim=mlp_dim
     )
     encoder.load_state_dict(torch.load(model_path))
-    
+
     for param in encoder.parameters():
         param.requires_grad = False
     encoder.eval()
 
-    model = TemporalScanPredictor(encoder, dim = dim).to(device)
+    model = TemporalScanPredictor(encoder, dim=dim).to(device)
     criterion = nn.MSELoss()
 
     optimizer = optim.Adam(model.parameters(), lr=lr)
-   
+
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=20)
 
-    model = train_generator(model, train_loader, val_loader, optimizer, criterion, epochs=50, patience=5, scheduler=scheduler)
+    model = train_generator(model, train_loader, val_loader, optimizer,
+                            criterion, epochs=50, patience=5, scheduler=scheduler)
 
     model_path = f"gen_model_lr{lr:.0e}_bs{batch_size}.pth"
     torch.save(model.state_dict(), model_path)
 
     return evaluate_val_loss(model, val_loader, criterion)
+
 
 def evaluate_val_loss(model, dataloader, criterion):
     model.eval()
@@ -131,31 +136,32 @@ def evaluate_val_loss(model, dataloader, criterion):
             total_loss += loss.item()
     return total_loss / len(dataloader)
 
+
 if __name__ == "__main__":
-    
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
+
     image_size = 224
     transform = Compose([
+        lambda x: x[np.newaxis, ...],
         ScaleIntensity(),
-        Resize((image_size, image_size)),
-        ToTensor()
+        Resize((224, 224)),   # <-- force 224x224
+        ToTensor(),
+        lambda x: x.squeeze(0)
     ])
-    
+
     data_root = '../stripped_5_scans_slices/'
     train_ids, test_ids, val_ids = split_data(os.listdir(data_root))
     train_set = MRIGenerationLoader(data_root, train_ids, transform=transform)
     val_set = MRIGenerationLoader(data_root, val_ids, transform=transform)
-        
-    
+
     study = optuna.create_study(direction="minimize")
     study.optimize(objective, n_trials=1)
-    
+
     print("Best hyperparameters:", study.best_trial.params)
-    
-    
+
     df = study.trials_dataframe()
     df.to_csv("generator_trials.csv", index=False)
     df.to_json("generator_trials.json", orient="records", indent=2)
-    
+
     print("📁 Trials saved to: generator_trials.csv & generator_trials.json")

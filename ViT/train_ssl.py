@@ -9,7 +9,7 @@ import copy
 from tqdm import tqdm
 import pandas as pd
 import itertools
-
+import numpy as np
 
 from vit_pytorch import ViT
 from models import ScanOrderViT
@@ -19,8 +19,7 @@ sys.path.append('../')
 from data_loader_skullstrip import MRISliceDataLoader, split_data
 
 
-
-def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50, patience=5, scheduler= None):
+def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50, patience=5, scheduler=None):
     model.train()
 
     best_val_loss = float('inf')
@@ -35,6 +34,7 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
             labels = batch["label"].to(device)
 
             logits = model.classify(scans)
+            
             loss = criterion(logits, labels)
 
             optimizer.zero_grad()
@@ -57,7 +57,8 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
                 val_loss += loss.item()
         avg_val_loss = val_loss / len(val_dataloader)
 
-        print(f"[SSL] Epoch {epoch+1} - Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+        print(
+            f"[SSL] Epoch {epoch+1} - Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
 
         if scheduler is not None:
             scheduler.step()
@@ -76,7 +77,8 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
 
     model.load_state_dict(best_model_wts)
     return model
-    
+
+
 def objective(trial):
     # dim = trial.suggest_categorical('dim', [128, 256, 512])
     # depth = trial.suggest_categorical('depth', [4, 6, 8])
@@ -85,40 +87,42 @@ def objective(trial):
 
     combo = trial.suggest_categorical("arch_combo", my_arch_space)
     dim, depth, heads, mlp_dim = combo
-    
+
     lr = trial.suggest_float('lr', 1e-5, 1e-2, log=True)
     weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True)
-    batch_size = trial.suggest_categorical('batch_size', [1])
+    batch_size = trial.suggest_categorical('batch_size', [16])
 
     print(f"\n📌 Trial {trial.number} Hyperparams:")
-    print(f"  Architecture: dim={dim}, depth={depth}, heads={heads}, mlp_dim={mlp_dim}")
-    print(f"  Training:     lr={lr:.2e}, weight_decay={weight_decay:.1e}, batch_size={batch_size}")
-    
+    print(
+        f"  Architecture: dim={dim}, depth={depth}, heads={heads}, mlp_dim={mlp_dim}")
+    print(
+        f"  Training:     lr={lr:.2e}, weight_decay={weight_decay:.1e}, batch_size={batch_size}")
 
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False)
 
-    
     model = ScanOrderViT(
-    image_size=image_size,
-    dim=dim,
-    depth=depth,
-    heads=heads,
-    mlp_dim=mlp_dim
+        image_size=image_size,
+        dim=dim,
+        depth=depth,
+        heads=heads,
+        mlp_dim=mlp_dim
     ).to(device)
-    
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    optimizer = optim.Adam(model.parameters(), lr=lr,
+                           weight_decay=weight_decay)
 
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=20)
 
-    model = train_ssl(model, train_loader, val_loader, optimizer, criterion, epochs=50, patience=5, scheduler = scheduler)
+    model = train_ssl(model, train_loader, val_loader, optimizer,
+                      criterion, epochs=50, patience=5, scheduler=scheduler)
 
     model_path = f"best_model_dim{dim}_depth{depth}_heads{heads}_mlp{mlp_dim}_lr{lr:.0e}_bs{batch_size}_wd{weight_decay:.0e}.pth"
     torch.save(model.state_dict(), model_path)
 
     return evaluate_val_loss(model, val_loader, criterion)
+
 
 def evaluate_val_loss(model, dataloader, criterion):
     model.eval()
@@ -135,42 +139,42 @@ def evaluate_val_loss(model, dataloader, criterion):
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
+
     image_size = 224
     transform = Compose([
+        lambda x: x[np.newaxis, ...],
         ScaleIntensity(),
-        Resize((image_size, image_size)),
-        ToTensor()
+        Resize((224, 224)),   # <-- force 224x224
+        ToTensor(),
+        lambda x: x.squeeze(0)
     ])
 
-  
-    
-    data_root = '../stripped_3_scans_slices/'
+    data_root = '../data/stripped_3_scans_slices/'
     train_ids, test_ids, val_ids = split_data(os.listdir(data_root))
     train_set = MRISliceDataLoader(data_root, train_ids, transform=transform)
     val_set = MRISliceDataLoader(data_root, val_ids, transform=transform)
-    
-    
+
     arch_combos = list(itertools.product(
         [128, 256, 512],     # dim
         [4, 6, 8],           # depth
         [4, 8],              # heads
         [256, 512, 1024]     # mlp_dim
-    )) # 54 combinations
-    
+    ))  # 54 combinations
+
     # Assign subsets to each groupmate
     group_id = 0  # change this to 0, 1, or 2
     split_size = len(arch_combos) // 3
-    my_arch_space = arch_combos[group_id * split_size : (group_id + 1) * split_size]
-
+    my_arch_space = arch_combos[group_id *
+                                split_size: (group_id + 1) * split_size]
 
     study = optuna.create_study(direction="minimize")
-    study.optimize(objective, n_trials=25, show_progress_bar=True) # 18 different combinations per person (not including LR, Weight decay, BS)
-    
+    # 18 different combinations per person (not including LR, Weight decay, BS)
+    study.optimize(objective, n_trials=25, show_progress_bar=True)
+
     print("Best hyperparameters:", study.best_trial.params)
-    
+
     df = study.trials_dataframe()
     df.to_csv("ssl_trials.csv", index=False)
     df.to_json("ssl_trials.json", orient="records", indent=2)
-    
+
     print("📁 Trials saved to: ssl_trials.csv & ssl_trials.json")

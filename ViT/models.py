@@ -24,32 +24,32 @@ class ScanOrderViT(nn.Module):
 
         print("Patch embedding Conv2d:")
         print(self.vit.to_patch_embedding[0])  # Should be Conv2d(1, dim, ...)
-        
+
         print("\nLayerNorm at the end of encoder:")
         print(self.vit.to_patch_embedding)  # Should be LayerNorm(dim)
-        
+
         print("\nMLP head:")
         print(self.vit.mlp_head)
 
     def forward(self, x):
-        print("Output from encoder:", x.shape)
+        # print("Output from encoder:", x.shape)
         # return self.encoder(x).mean(dim=1)
 
-        outputs = []
-        chunk_size = 512
-        for i in range(0, x.size(0), chunk_size):
-            chunk = x[i:i+chunk_size]
-            out = self.encoder(chunk)  # [chunk, dim]
-            outputs.append(out)
-        return torch.cat(outputs, dim=0)
+        # outputs = []
+        # chunk_size = 512
+        # for i in range(0, x.size(0), chunk_size):
+        #     chunk = x[i:i+chunk_size]
+        #     out = self.encoder(chunk)  # [chunk, dim]
+        #     outputs.append(out)
+        # return torch.cat(outputs, dim=0)
+
+        return self.encoder(x)
 
     def classify(self, batch):
-        print(batch.shape)
-        B, C, T, H, W = batch.shape
-        x = batch.permute(0, 2, 1, 3, 4).contiguous()
-        x = batch.view(B * T * C, 1, H, W)
+        B, T, H, W = batch.shape
+        x = batch.unsqueeze(2).view(B * T, 1, H, W)
         x = self.forward(x)
-        x = x.view(B, -1, self.dim).mean(dim=1)
+        x = x.view(B, T, -1).mean(dim=1)
         return self.classifier(x)
 
 
@@ -80,4 +80,3 @@ class TemporalScanPredictor(nn.Module):
         # Decode to [B, 1, H, W]
         out = self.decoder(feats).view(B, 1, H, W)
         return out
-       
