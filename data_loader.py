@@ -166,7 +166,7 @@ class MRISliceDataLoader(Dataset):
         numpy_data = np.stack(numpy_data, axis=0)
 
         # Randomly choose a slice along depth D
-        d_idx = np.random.randint(numpy_data.shape[1])
+        d_idx = np.random.randint(44,132)
         slices_2d = numpy_data[:, d_idx, :, :]  # Shape: (3, H, W)
 
         return {
