@@ -14,7 +14,9 @@ class ScanOrderViT(nn.Module):
             depth=depth,
             heads=heads,
             mlp_dim=mlp_dim,
-            channels=1
+            channels=1,
+            dropout=0.2,
+            emb_dropout=0.2
         )
 
         self.dim = dim
@@ -32,17 +34,6 @@ class ScanOrderViT(nn.Module):
         print(self.vit.mlp_head)
 
     def forward(self, x):
-        # print("Output from encoder:", x.shape)
-        # return self.encoder(x).mean(dim=1)
-
-        # outputs = []
-        # chunk_size = 512
-        # for i in range(0, x.size(0), chunk_size):
-        #     chunk = x[i:i+chunk_size]
-        #     out = self.encoder(chunk)  # [chunk, dim]
-        #     outputs.append(out)
-        # return torch.cat(outputs, dim=0)
-
         return self.encoder(x)
 
     def classify(self, batch):
