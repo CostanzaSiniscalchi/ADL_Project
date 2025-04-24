@@ -11,7 +11,7 @@ from monai.networks.nets import ViTAutoEnc
 from monai.transforms import RandGaussianNoise, RandAffine, Compose, ScaleIntensity, ToTensor
 from monai.losses import SSIMLoss
 import cv2
-
+import sys
 
 def make_viz(epoch, save_dir, count, original, scans, preds):
     os.makedirs(save_dir, exist_ok=True)
@@ -28,6 +28,7 @@ def make_viz(epoch, save_dir, count, original, scans, preds):
         # Normalize each slice to [0, 255] for display
         def normalize(img):
             # img = (img - img.min()) / (img.max() - img.min() + 1e-5)
+            img = np.clip(img, 0.0, 1.0)
             return (img * 255).astype(np.uint8)
 
         row = np.concatenate([
@@ -57,7 +58,7 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
             original = batch["original"].to(device)  # (B, 3, 32, 256, 240)
 
             recon_batch, hidden_states = model(scans)
-            recon_batch = torch.sigmoid(recon_batch)
+            # recon_batch = torch.sigmoid(recon_batch)
 
             loss = criterion(recon_batch, scans)
 
@@ -67,7 +68,7 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
 
             # visualize on first step:
             if total_loss == 0:
-                make_viz(epoch, './training_viz_vit/', 0,
+                make_viz(epoch, './training_viz_vit_do_nosig_random/', 0,
                          original, scans, recon_batch)
             total_loss += loss.item()
 
@@ -82,7 +83,7 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
                 original = batch["original"].to(device)
 
                 recon, hidden_states = model(scans)
-                recon = torch.sigmoid(recon)
+                # recon = torch.sigmoid(recon)
                 # sum up batch loss
                 loss = criterion(recon, original)
                 val_loss += loss.item()
@@ -117,6 +118,8 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
 
 
 if __name__ == "__main__":
+    sys.stdout = open('train_ssl_ViTVAE_random.log', 'w')
+    sys.stderr = sys.stdout
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     ssl_transforms = Compose([
@@ -134,9 +137,9 @@ if __name__ == "__main__":
     train_ids, test_ids, val_ids = split_data(os.listdir(data_root))
 
     train_set = MRIDataLoader(data_root, train_ids,
-                              transform=ssl_transforms, mask_scan=True)
+                              transform=ssl_transforms, mask_scan='random')
     val_set = MRIDataLoader(
-        data_root, val_ids, transform=val_transforms, mask_scan=True)
+        data_root, val_ids, transform=val_transforms, mask_scan='random')
 
     train_loader = DataLoader(train_set, batch_size=8,
                               shuffle=True, num_workers=4, pin_memory=True)
@@ -144,7 +147,7 @@ if __name__ == "__main__":
                             shuffle=False, num_workers=4, pin_memory=True)
 
     model = ViTAutoEnc(in_channels=3, out_channels=3, patch_size=(16, 16, 16), spatial_dims=3,
-                       img_size=(32, 256, 240), proj_type='conv')
+                       img_size=(32, 256, 240), proj_type='conv', dropout_rate=0.2)
 
     recon_loss = nn.MSELoss(reduction='mean')
     ssim = SSIMLoss(spatial_dims=3, data_range=1.0)

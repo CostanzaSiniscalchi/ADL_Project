@@ -34,11 +34,11 @@ def split_data(ids, train_size=0.7, test_size=0.15, validation_size=0.15, seed=1
 
 
 class MRIDataLoader(Dataset):
-    def __init__(self, numpy_dir, id_list, transform=None, mask_scan=False):
+    def __init__(self, numpy_dir, id_list, transform=None, mask_scan=None):
         self.numpy_dir = numpy_dir
         self.transform = transform
         self.patient_ids = id_list
-        self.mask_scan = mask_scan  # <-- NEW
+        self.mask_scan = mask_scan
         self.data, self.labels = self._prepare_data()
 
     def _prepare_data(self):
@@ -87,11 +87,20 @@ class MRIDataLoader(Dataset):
         # Randomly mask one scan (for SSL)
         original_data = numpy_data.copy()
         masked_index = -1
-        if self.mask_scan:
+        if self.mask_scan == 'total':
             masked_index = np.random.randint(0, len(numpy_data))
             original_shape = numpy_data[masked_index].shape
             numpy_data[masked_index] = np.zeros(
                 original_shape, dtype=np.float32)
+        elif self.mask_scan == 'random':
+            # Masking ratio
+            mask_ratio = 0.75
+            masked_index = np.random.randint(0, len(numpy_data))
+            # Create random binary mask with 40% of voxels zeroed out
+            mask = np.random.rand(*numpy_data[masked_index].shape) > mask_ratio
+
+            # Apply elementwise mask
+            numpy_data[masked_index] = numpy_data[masked_index] * mask.astype(np.float32)
 
         return {
             "labels": torch.tensor(label, dtype=torch.long),
@@ -102,7 +111,7 @@ class MRIDataLoader(Dataset):
 
 
 class MRISliceDataLoader(Dataset):
-    def __init__(self, numpy_dir, id_list, num_timepoints=3, transform=None, mask_scan=False):
+    def __init__(self, numpy_dir, id_list, num_timepoints=3, transform=None, mask_scan=None):
         self.numpy_dir = numpy_dir
         self.transform = transform
         self.num_timepoints = num_timepoints
@@ -160,10 +169,21 @@ class MRISliceDataLoader(Dataset):
         # Apply masking
         masked_data = original_data.copy()
         masked_index = -1
-        if self.mask_scan:
+
+        if self.mask_scan == 'total':
             masked_index = np.random.randint(0, self.num_timepoints)
             # or torch.zeros_like(masked_data[masked_index])
             masked_data[masked_index] = 0.0
+        elif self.mask_scan == 'random':
+            # Masking ratio
+            mask_ratio = 0.75
+            masked_index = np.random.randint(0, self.num_timepoints)
+
+            # Create random binary mask with 40% of voxels zeroed out
+            mask = np.random.rand(*masked_data[masked_index].shape) > mask_ratio
+
+            # Apply elementwise mask
+            masked_data[masked_index] = masked_data[masked_index] * mask.astype(np.float32)
 
         return {
             # masked
