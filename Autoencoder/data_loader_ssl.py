@@ -100,7 +100,8 @@ class MRIDataLoader(Dataset):
             mask = np.random.rand(*numpy_data[masked_index].shape) > mask_ratio
 
             # Apply elementwise mask
-            numpy_data[masked_index] = numpy_data[masked_index] * mask.astype(np.float32)
+            numpy_data[masked_index] = numpy_data[masked_index] * \
+                mask.astype(np.float32)
 
         return {
             "labels": torch.tensor(label, dtype=torch.long),
@@ -180,10 +181,12 @@ class MRISliceDataLoader(Dataset):
             masked_index = np.random.randint(0, self.num_timepoints)
 
             # Create random binary mask with 40% of voxels zeroed out
-            mask = np.random.rand(*masked_data[masked_index].shape) > mask_ratio
+            mask = np.random.rand(
+                *masked_data[masked_index].shape) > mask_ratio
 
             # Apply elementwise mask
-            masked_data[masked_index] = masked_data[masked_index] * mask.astype(np.float32)
+            masked_data[masked_index] = masked_data[masked_index] * \
+                mask.astype(np.float32)
 
         return {
             # masked
@@ -208,21 +211,17 @@ class MRIGenerationLoader(Dataset):
             patient_path = os.path.join(self.root_dir, patient_id)
             if not os.path.exists(patient_path):
                 continue
-
             timepoint_order = ['PREBL00', 'PREFU12',
                                'PREFU24', 'PREFU36', 'PREFU48']
+            order_map = {k: i for i, k in enumerate(timepoint_order)}
+
             scan_dates = sorted(os.listdir(patient_path),
-                                key=lambda x: timepoint_order.index(x))
+                                key=lambda x: next((order_map[k] for k in timepoint_order if k in x), float('inf')))
 
             patient_scans = []
 
-            for date in scan_dates:
-                scan_dir = os.path.join(patient_path, date)
-                npy_files = [f for f in os.listdir(
-                    scan_dir) if f.endswith('.npy')]
-                if not npy_files:
-                    continue
-                full_path = os.path.join(scan_dir, npy_files[0])
+            for npy_file in scan_dates:
+                full_path = os.path.join(patient_path, npy_file)
                 patient_scans.append(full_path)
 
             if len(patient_scans) >= 5:
@@ -237,19 +236,22 @@ class MRIGenerationLoader(Dataset):
         paths = self.data[idx]
 
         volumes = [np.load(p) for p in paths]  # Each: [D, H, W]
-        if self.transform:
-            volumes = [self.transform(vol) for vol in volumes]
+        for v in range(len(volumes)):
+            # use the middle 32 slices
+            volumes[v] = volumes[v][volumes[v].shape[0] //
+                                    2 - 16: volumes[v].shape[0]//2 + 16]
+            if self.transform:
+                volumes[v] = self.transform(volumes[v])
 
-        volumes = np.stack(volumes, axis=0)  # [5, D, H, W]
-        d_idx = np.random.randint(volumes.shape[1])
-        slice_2d = volumes[:, d_idx, :, :]  # [5, H, W]
+        # Convert to stacked 3-channel input
+        numpy_data = np.stack(volumes, axis=0)
+        # need to clip??
+        numpy_data = np.clip(numpy_data, 0.0, 1.0)
 
-        input_seq = slice_2d[:4]      # [4, H, W]
-        target_slice = slice_2d[4]    # [H, W]
+        input_seq = numpy_data[:4]
+        target_vol = numpy_data[4:5]
 
         return {
-            # [4, 1, H, W]
-            "input": torch.tensor(input_seq).unsqueeze(1).float(),
-            # [1, H, W]
-            "target": torch.tensor(target_slice).unsqueeze(0).float()
+            "input": torch.tensor(input_seq, dtype=torch.float32),
+            "target": torch.tensor(target_vol, dtype=torch.float32),
         }
