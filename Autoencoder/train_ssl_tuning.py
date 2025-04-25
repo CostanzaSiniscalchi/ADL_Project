@@ -22,11 +22,11 @@ ssim = SSIMLoss(spatial_dims=3, data_range=1.0)
 def loss_fn(recon_x, x):
     return 0.5 * recon_loss(recon_x, x) + 0.5 * ssim(recon_x, x)
 
-USER_ID = 1  # 0 or 1
+USER_ID = [0,1,2,3,4,5,6,7,8,9,10] # 0 or 1
 
 # === Objective Function for Optuna ===
 def objective(trial):
-    if trial.number % 2 != USER_ID:
+    if trial.number not in USER_ID:
         raise optuna.exceptions.TrialPruned()
 
     patch_size = trial.suggest_categorical("patch_size", [(16, 16, 16)])
@@ -59,7 +59,7 @@ def objective(trial):
     ).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
-    model = train_ssl(model, train_loader, val_loader, optimizer, loss_fn, epochs=500, patience=5)
+    model = train_ssl(model, train_loader, val_loader, optimizer, loss_fn, epochs=400, patience=20)
 
     model_path = os.path.join("models_optuna", f"{trial_name}.pt")
     os.makedirs("models_optuna", exist_ok=True)
