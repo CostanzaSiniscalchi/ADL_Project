@@ -68,7 +68,7 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
 
             # visualize on first step:
             if total_loss == 0:
-                make_viz(epoch, './training_viz_vit_do_nosig_random_after/', 0,
+                make_viz(epoch, './training_viz_vit_do_nosig_random_2/', 0,
                          original, scans, recon_batch)
             total_loss += loss.item()
 
@@ -104,7 +104,7 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
                 'model_state_dict': best_model_wts,
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': best_val_loss,
-            }, 'best_ViTVAE_after.pt')
+            }, 'best_ViTVAE_2.pt')
             epochs_no_improve = 0
         elif epoch > 10:
             epochs_no_improve += 1
@@ -118,7 +118,7 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
 
 
 if __name__ == "__main__":
-    sys.stdout = open('train_ssl_ViTVAE_random_after.log', 'w')
+    sys.stdout = open('train_ssl_ViTVAE_random_2.log', 'w')
     sys.stderr = sys.stdout
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -161,12 +161,12 @@ if __name__ == "__main__":
     criterion = loss_function
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
-    if os.path.exists('./best_ViTVAE.pt'):
-        # load the state
-        state = torch.load('./best_ViTVAE.pt',
-                           weights_only=True, map_location=device)
-        model.load_state_dict(state['model_state_dict'])
-        optimizer.load_state_dict(state['optimizer_state_dict'])
+    # if os.path.exists('./best_ViTVAE.pt'):
+    #     # load the state
+    #     state = torch.load('./best_ViTVAE.pt',
+    #                        weights_only=True, map_location=device)
+    #     model.load_state_dict(state['model_state_dict'])
+    #     optimizer.load_state_dict(state['optimizer_state_dict'])
 
     trained_model = train_ssl(
         model, train_loader, val_loader, optimizer, criterion, epochs=500, patience=10)
