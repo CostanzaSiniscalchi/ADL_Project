@@ -46,7 +46,7 @@ def make_viz(epoch, save_dir, count, original, scans, preds):
     cv2.imwrite(save_path, final_image)
 
 
-def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50, patience=5, scheduler=None):
+def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50, patience=5, scheduler=None, trial_name='test'):
     best_val_loss = float('inf')
     best_model_wts = copy.deepcopy(model.state_dict())
     epochs_no_improve = 0
@@ -68,9 +68,9 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
             optimizer.step()
 
             # visualize on first step:
+            os.makedirs(f'./training_viz_vit_do_nosig_random_2/{trial_name}/', exist_ok=True)
             if total_loss == 0:
-                make_viz(epoch, './training_viz_vit_do_nosig_random_2/', 0,
-                         original, scans, recon_batch)
+                make_viz(epoch, f'./training_viz_vit_do_nosig_random_2/{trial_name}/', 0, original, scans, recon_batch)
             total_loss += loss.item()
 
         avg_train_loss = total_loss / len(dataloader)

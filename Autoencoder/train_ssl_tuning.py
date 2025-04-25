@@ -13,61 +13,122 @@ from model import ViTAutoEnc
 from train_ssl_ViTVAE import train_ssl
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# === Fixed Constants ===
 data_root = '../data/stripped_3_scans/'
+patch_size = (16, 16, 16)
+mask_ratio = 0.625
+batch_size = 8
+fixed_num_heads = 8  # assuming
+
+# === Data Split ===
 train_ids, test_ids, val_ids = split_data(os.listdir(data_root))
-val_transforms = Compose([ScaleIntensity(minv=0.0, maxv=1.0), ToTensor()])
+
+# === Preprocessing ===
+train_transforms = Compose([
+    ScaleIntensity(minv=0.0, maxv=1.0),
+    RandGaussianNoise(prob=0.2, std=0.01),
+    RandAffine(prob=0.3, rotate_range=(0.05, 0.05, 0.05)),
+    ToTensor()
+])
+
+val_transforms = Compose([
+    ScaleIntensity(minv=0.0, maxv=1.0),
+    ToTensor()
+])
+
+# === Loss ===
 recon_loss = nn.MSELoss(reduction='mean')
 ssim = SSIMLoss(spatial_dims=3, data_range=1.0)
 
 def loss_fn(recon_x, x):
     return 0.5 * recon_loss(recon_x, x) + 0.5 * ssim(recon_x, x)
 
-USER_ID = [0,1,2,3,4,5,6,7,8,9,10] # 0 or 1
+# === Predefined Trials ===
+predefined_trials_roshan = [
+    {"hidden_size": 256, "mlp_dim": 1024, "num_layers": 4, "dropout": 0.10},
+    {"hidden_size": 256, "mlp_dim": 2048, "num_layers": 8, "dropout": 0.15},
+    {"hidden_size": 512, "mlp_dim": 1024, "num_layers": 4, "dropout": 0.20},
+    {"hidden_size": 512, "mlp_dim": 2048, "num_layers": 8, "dropout": 0.10},
+    {"hidden_size": 256, "mlp_dim": 2048, "num_layers": 4, "dropout": 0.15}
+]
+
+predefined_trials_sana = [
+    {"hidden_size": 512, "mlp_dim": 1024, "num_layers": 8, "dropout": 0.20},
+    {"hidden_size": 256, "mlp_dim": 1024, "num_layers": 8, "dropout": 0.10},
+    {"hidden_size": 512, "mlp_dim": 2048, "num_layers": 4, "dropout": 0.20},
+    {"hidden_size": 256, "mlp_dim": 2048, "num_layers": 8, "dropout": 0.10},
+    {"hidden_size": 512, "mlp_dim": 1024, "num_layers": 4, "dropout": 0.15}
+]
+
+#Set the trials here - 
+predefined_trials = predefined_trials_sana
+
+os.makedirs("optuna_results", exist_ok=True)
+result_file = f"optuna_results/optuna_results_fixed.csv"
+
+with open(result_file, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["trial", "params", "val_loss"])
 
 # === Objective Function for Optuna ===
 def objective(trial):
-    if trial.number not in USER_ID:
+    trial_id = trial.number
+    if trial_id >= len(predefined_trials):
         raise optuna.exceptions.TrialPruned()
 
-    patch_size = trial.suggest_categorical("patch_size", [(16, 16, 16)])
-    hidden_size = trial.suggest_categorical("hidden_size", [256, 512])
-    mlp_dim = trial.suggest_categorical("mlp_dim", [1024, 2048])
-    num_layers = trial.suggest_categorical("num_layers", [4, 8])
-    dropout = trial.suggest_categorical("dropout", [0.1, 0.15, 0.2])
-    batch_size = trial.suggest_categorical("batch_size", [8])
-    mask_ratio = trial.suggest_categorical("mask_ratio", [0.5, 0.625, 0.75])
+    params = predefined_trials[trial_id]
+    hidden_size = params['hidden_size']
+    mlp_dim = params['mlp_dim']
+    num_layers = params['num_layers']
+    dropout = params['dropout']
 
-    trial_name = f"ViTAE_{trial.number}_p{patch_size[0]}_h{hidden_size}_m{mlp_dim}_l{num_layers}_d{int(dropout*10)}_bs{batch_size}_mr{int(mask_ratio*100)}"
-    print(f"\n[Trial {trial.number}] {trial_name} STARTED")
+    trial_name = f"ViTAE_{trial_id}_h{hidden_size}_m{mlp_dim}_l{num_layers}_d{int(dropout*10)}"
 
-    train_transforms = Compose([
-        ScaleIntensity(minv=0.0, maxv=1.0),
-        RandGaussianNoise(prob=0.2, std=0.01),
-        RandAffine(prob=0.3, rotate_range=(0.05, 0.05, 0.05)),
-        ToTensor()
-    ])
+    print(f"\n[Trial {trial_id}] {trial_name} STARTED")
+
+    # Load Datasets
     train_set = MRIDataLoader(data_root, train_ids, transform=train_transforms, mask_scan='random', mask_ratio=mask_ratio)
     val_set = MRIDataLoader(data_root, val_ids, transform=val_transforms, mask_scan='random', mask_ratio=mask_ratio)
 
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
+    # Model
     model = ViTAutoEnc(
-        in_channels=3, out_channels=3, patch_size=patch_size, spatial_dims=3,
-        img_size=(32, 256, 240), proj_type='conv', dropout_rate=dropout,
-        hidden_size=hidden_size, mlp_dim=mlp_dim, num_layers=num_layers, num_heads=8
+        in_channels=3,
+        out_channels=3,
+        patch_size=patch_size,
+        spatial_dims=3,
+        img_size=(32, 256, 240),
+        proj_type='conv',
+        dropout_rate=dropout,
+        hidden_size=hidden_size,
+        mlp_dim=mlp_dim,
+        num_layers=num_layers,
+        num_heads=fixed_num_heads,
     ).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
-    model = train_ssl(model, train_loader, val_loader, optimizer, loss_fn, epochs=400, patience=20)
 
-    model_path = os.path.join("models_optuna", f"{trial_name}.pt")
+    # Train
+    model = train_ssl(
+        model,
+        train_loader,
+        val_loader,
+        optimizer,
+        loss_fn,
+        epochs=400,
+        patience=15,
+        trial_name=trial_name)
+
+    # Save Model
     os.makedirs("models_optuna", exist_ok=True)
+    model_path = os.path.join("models_optuna", f"{trial_name}.pt")
     torch.save(model.state_dict(), model_path)
+    print(f"[Trial {trial_id}] DONE — model saved at {model_path}")
 
-    print(f"[Trial {trial.number}] DONE — model saved at {model_path}")
-
-    # Evaluate validation loss
+    # Evaluate
     model.eval()
     val_loss = 0.0
     with torch.no_grad():
@@ -78,16 +139,19 @@ def objective(trial):
             val_loss += loss_fn(recon, original).item()
 
     avg_val_loss = val_loss / len(val_loader)
+
+    # --- IMMEDIATE SAVE after trial ---
+    with open(result_file, "a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([trial_id, params, avg_val_loss])
+
+    print(f"[Trial {trial_id}] Logged result — val_loss={avg_val_loss:.6f}")
+
     return avg_val_loss
 
-# === Run Optuna Study Only ===
+# === Main Optuna Execution ===
 if __name__ == "__main__":
     study = optuna.create_study(direction="minimize")
-    study.optimize(objective, n_trials=40, show_progress_bar=True)
+    study.optimize(objective, n_trials=len(predefined_trials), show_progress_bar=True)
 
-    with open(f"optuna_results_user{USER_ID}.csv", "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["trial", "params", "val_loss"])
-        for t in study.trials:
-            if t.number % 2 == USER_ID:
-                writer.writerow([t.number, t.params, t.value])
+    print("✅ All trials completed.")
