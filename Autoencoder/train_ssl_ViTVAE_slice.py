@@ -142,9 +142,9 @@ if __name__ == "__main__":
     train_ids, test_ids, val_ids = split_data(os.listdir(data_root))
 
     train_set = MRISliceDataLoader(data_root, train_ids,
-                                   transform=ssl_transforms, mask_scan='random')
+                                   transform=ssl_transforms, mask_scan='random', mask_ratio=0.5)
     val_set = MRISliceDataLoader(
-        data_root, val_ids, transform=val_transforms, mask_scan='random')
+        data_root, val_ids, transform=val_transforms, mask_scan='random', mask_ratio=0.5)
 
     train_loader = DataLoader(train_set, batch_size=8,
                               shuffle=True, num_workers=4, pin_memory=True)
@@ -166,4 +166,4 @@ if __name__ == "__main__":
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
     trained_model = train_ssl(
-        model, train_loader, val_loader, optimizer, criterion, epochs=500, patience=20)
+        model, train_loader, val_loader, optimizer, criterion, epochs=500, patience=10)
