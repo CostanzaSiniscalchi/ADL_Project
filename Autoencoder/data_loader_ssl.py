@@ -97,8 +97,12 @@ class MRIDataLoader(Dataset):
             # Masking ratio
             masked_index = np.random.randint(0, len(numpy_data))
             # Create random binary mask with 40% of voxels zeroed out
+            if self.mask_ratio == 'random':
+                ratio = np.random.uniform(0.25, 0.75)
+            else:
+                ratio = self.mask_ratio
             mask = np.random.rand(
-                *numpy_data[masked_index].shape) > self.mask_ratio
+                *numpy_data[masked_index].shape) > ratio
 
             # Apply elementwise mask
             numpy_data[masked_index] = numpy_data[masked_index] * \
@@ -182,8 +186,12 @@ class MRISliceDataLoader(Dataset):
             masked_index = np.random.randint(0, self.num_timepoints)
 
             # Create random binary mask with 40% of voxels zeroed out
+            if self.mask_ratio == 'random':
+                ratio = np.random.uniform(0.25, 0.75)
+            else:
+                ratio = self.mask_ratio
             mask = np.random.rand(
-                *masked_data[masked_index].shape) > self.mask_ratio
+                *masked_data[masked_index].shape) > ratio
 
             # Apply elementwise mask
             masked_data[masked_index] = masked_data[masked_index] * \
