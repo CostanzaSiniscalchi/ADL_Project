@@ -13,6 +13,7 @@ from monai.losses import SSIMLoss
 import cv2
 import sys
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def make_viz(epoch, save_dir, count, original, scans, preds):
     os.makedirs(save_dir, exist_ok=True)
