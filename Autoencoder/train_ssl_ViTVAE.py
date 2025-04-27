@@ -61,7 +61,7 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
             recon_batch, hidden_states = model(scans)
             # recon_batch = torch.sigmoid(recon_batch)
 
-            loss = criterion(recon_batch, scans)
+            loss = criterion(recon_batch, original)
 
             optimizer.zero_grad()
             loss.backward()

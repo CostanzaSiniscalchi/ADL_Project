@@ -17,6 +17,47 @@ import sys
 hidden_size_train = int(768)
 mlp_size_train = int(3072)
 
+recon_loss = nn.MSELoss(reduction='mean')
+ssim = SSIMLoss(spatial_dims=2, data_range=1.0)
+
+
+def loss_function(recon_x, x,):
+    mse = recon_loss(recon_x, x)
+    ssim_loss = ssim(recon_x, x)
+    return 0.5*mse + 0.5*ssim_loss
+
+
+def weighted_loss_function(recon_batch, scans, original, masked_index, lambda_masked=2.0, lambda_unmasked=1.0):
+    """
+    Computes a weighted loss focusing more on masked slices for (B, 3, 224, 224) inputs.
+    """
+    batch_size, num_slices, H, W = scans.shape
+
+    mse_loss = nn.MSELoss(reduction='none')
+    ssim_loss_fn = SSIMLoss(spatial_dims=2, data_range=1.0)
+
+    total_loss = 0.0
+
+    for b in range(batch_size):
+        for s in range(num_slices):
+            # masked slice for this batch element
+            if s == masked_index[b].item():
+                weight = lambda_masked
+            else:
+                weight = lambda_unmasked
+
+            # MSE between predicted and original slice
+            mse = mse_loss(recon_batch[b, s], original[b, s]).mean()
+
+            # SSIM between predicted and original slice
+            ssim_loss = ssim_loss_fn(
+                recon_batch[b, s].unsqueeze(0), original[b, s].unsqueeze(0))  # Need batch dim
+
+            total_loss += weight * (0.5 * mse + 0.5 * ssim_loss)
+
+    total_loss /= (batch_size * num_slices)
+    return total_loss
+
 
 def make_viz(epoch, save_dir, count, original, scans, preds):
     save_viz_dir = os.path.join(save_dir, 'viz_val/')
@@ -59,13 +100,15 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
         total_loss = 0
         model.train()
         for batch in tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}"):
-            scans = batch["numpy"].to(device)        # (B, 3, 32, 256, 240)
-            original = batch["original"].to(device)  # (B, 3, 32, 256, 240)
+            scans = batch["numpy"].to(device)        # (B, 3, 224, 224)
+            original = batch["original"].to(device)  # (B, 3, 224, 224)
 
             recon_batch, hidden_states = model(scans)
             # recon_batch = torch.sigmoid(recon_batch)
+            masked_index = batch["masked_index"]
 
-            loss = criterion(recon_batch, scans)
+            loss = criterion(recon_batch, original)
+            # loss = criterion(recon_batch, scans, original, masked_index)
 
             optimizer.zero_grad()
             loss.backward()
@@ -163,15 +206,9 @@ if __name__ == "__main__":
     model = ViTAutoEnc(in_channels=3, out_channels=3, patch_size=(16, 16), spatial_dims=2,
                        img_size=(224, 224), proj_type='conv', dropout_rate=0.2, hidden_size=hidden_size_train, mlp_dim=mlp_size_train)
 
-    recon_loss = nn.MSELoss(reduction='mean')
-    ssim = SSIMLoss(spatial_dims=2, data_range=1.0)
-
-    def loss_function(recon_x, x,):
-        mse = recon_loss(recon_x, x)
-        ssim_loss = ssim(recon_x, x)
-        return 0.5*mse + 0.5*ssim_loss
-
+    # criterion = weighted_loss_function
     criterion = loss_function
+
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
     trained_model = train_ssl(
