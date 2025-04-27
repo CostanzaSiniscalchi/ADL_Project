@@ -264,3 +264,72 @@ class MRIGenerationLoader(Dataset):
             "input": torch.tensor(input_seq, dtype=torch.float32),
             "target": torch.tensor(target_vol, dtype=torch.float32),
         }
+
+
+class MRISliceGeneratorDataLoader(Dataset):
+    def __init__(self, root_dir, id_list, num_timepoints=5, transform=None, mask_scan=None, mask_ratio=0.75):
+        self.root_dir = root_dir
+        self.transform = transform
+        self.num_timepoints = num_timepoints
+        self.mask_scan = mask_scan
+        self.mask_ratio = mask_ratio
+        self.middle_slice_indices = list(range(44, 132))  # 88 central slices
+        self.id_list = id_list
+        self.data = self._prepare_data()
+
+    def _prepare_data(self):
+        examples = []
+        for patient_id in self.id_list:
+            patient_path = os.path.join(self.root_dir, patient_id)
+            if not os.path.exists(patient_path):
+                continue
+            timepoint_order = ['PREBL00', 'PREFU12',
+                               'PREFU24', 'PREFU36', 'PREFU48']
+            order_map = {k: i for i, k in enumerate(timepoint_order)}
+
+            scan_dates = sorted(os.listdir(patient_path),
+                                key=lambda x: next((order_map[k] for k in timepoint_order if k in x), float('inf')))
+            # print(scan_dates)
+            scan_paths = []
+            for scan_date in scan_dates:
+                slices = sorted([f for f in os.listdir(os.path.join(
+                    patient_path, scan_date)) if f.endswith(".npy")])
+                if len(slices) == 176:
+                    scan_paths.append(
+                        [os.path.join(patient_path, scan_date, f) for f in slices])
+
+            if len(scan_paths) == self.num_timepoints:
+                for slice_idx in self.middle_slice_indices:
+                    examples.append((scan_paths, slice_idx))
+        return examples
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        scan_paths, slice_idx = self.data[idx]
+
+        original_slices = []
+
+        for scan in scan_paths:
+            slice_path = scan[slice_idx]
+            img = np.load(slice_path).astype(np.float32)  # shape: (H, W)
+
+            if self.transform:
+                img = self.transform(img)
+
+            original_slices.append(img)
+
+        # Convert list to tensor: [5, H, W]
+        original_data = np.stack(original_slices, axis=0)
+
+        # need to clip??
+        original_data = np.clip(original_data, 0.0, 1.0)
+
+        input_seq = original_data[:4]
+        target_vol = original_data[4:5]
+
+        return {
+            "input": torch.tensor(input_seq, dtype=torch.float32),
+            "target": torch.tensor(target_vol, dtype=torch.float32),
+        }
