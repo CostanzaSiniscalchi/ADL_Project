@@ -14,9 +14,13 @@ import cv2
 from monai.transforms import Compose, NormalizeIntensity, Resize, ToTensor, RandFlip, RandAffine, RandGaussianNoise
 import sys
 
+hidden_size_train = int(768)
+mlp_size_train = int(3072)
+
 
 def make_viz(epoch, save_dir, count, original, scans, preds):
-    os.makedirs(save_dir, exist_ok=True)
+    save_viz_dir = os.path.join(save_dir, 'viz_val/')
+    os.makedirs(save_viz_dir, exist_ok=True)
 
     batch_ind = 0
 
@@ -41,7 +45,7 @@ def make_viz(epoch, save_dir, count, original, scans, preds):
 
     # vertically stack 3 scan slices
     final_image = np.concatenate(rows, axis=0)
-    save_path = os.path.join(save_dir, f"epoch_{epoch}_sample_{count}.png")
+    save_path = os.path.join(save_viz_dir, f"epoch_{epoch}_sample_{count}.png")
     cv2.imwrite(save_path, final_image)
 
 
@@ -67,10 +71,6 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
             loss.backward()
             optimizer.step()
 
-            # visualize on first step:
-            if total_loss == 0:
-                make_viz(epoch, './training_viz_vit_slice_nosig_random/', 0,
-                         original, scans, recon_batch)
             total_loss += loss.item()
 
         avg_train_loss = total_loss / len(dataloader)
@@ -87,6 +87,10 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
                 # recon = torch.sigmoid(recon)
                 # sum up batch loss
                 loss = criterion(recon, original)
+                # visualize on first step:
+                if val_loss == 0:
+                    make_viz(epoch, f'./training_runs/vitvae_{hidden_size_train}_{mlp_size_train}', 0,
+                             original, scans, recon)
                 val_loss += loss.item()
         avg_val_loss = val_loss / len(val_dataloader)
 
@@ -105,7 +109,7 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
                 'model_state_dict': best_model_wts,
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': best_val_loss,
-            }, 'best_ViTVAE_slice.pt')
+            }, f'./training_runs/vitvae_{hidden_size_train}_{mlp_size_train}/best_{hidden_size_train}_{mlp_size_train}.pt')
             epochs_no_improve = 0
         elif epoch > 10:
             epochs_no_improve += 1
@@ -119,13 +123,18 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
 
 
 if __name__ == "__main__":
-    sys.stdout = open('train_ssl_ViTVAE_slice_random.log', 'w')
+    exp_dir = f'./training_runs/vitvae_{hidden_size_train}_{mlp_size_train}/'
+    os.makedirs(exp_dir, exist_ok=True)
+    sys.stdout = open(
+        f'./training_runs/vitvae_{hidden_size_train}_{mlp_size_train}/log_{hidden_size_train}_{mlp_size_train}.log', 'w')
     sys.stderr = sys.stdout
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:1")
 
     ssl_transforms = Compose([
         lambda x: x[np.newaxis, ...],  # (1, H, W)
         ScaleIntensity(minv=0.0, maxv=1.0),
+        RandGaussianNoise(prob=0.2, std=0.01),
+        RandAffine(prob=0.3, rotate_range=(0.05, 0.05, 0.05)),
         Resize((224, 224)),
         ToTensor(),
         lambda x: x.squeeze(0)
@@ -142,9 +151,9 @@ if __name__ == "__main__":
     train_ids, test_ids, val_ids = split_data(os.listdir(data_root))
 
     train_set = MRISliceDataLoader(data_root, train_ids,
-                                   transform=ssl_transforms, mask_scan='random', mask_ratio=0.5)
+                                   transform=ssl_transforms, mask_scan='random', mask_ratio='random')
     val_set = MRISliceDataLoader(
-        data_root, val_ids, transform=val_transforms, mask_scan='random', mask_ratio=0.5)
+        data_root, val_ids, transform=val_transforms, mask_scan='random', mask_ratio='random')
 
     train_loader = DataLoader(train_set, batch_size=8,
                               shuffle=True, num_workers=4, pin_memory=True)
@@ -152,7 +161,7 @@ if __name__ == "__main__":
                             shuffle=False, num_workers=4, pin_memory=True)
 
     model = ViTAutoEnc(in_channels=3, out_channels=3, patch_size=(16, 16), spatial_dims=2,
-                       img_size=(224, 224), proj_type='conv', dropout_rate=0.2)
+                       img_size=(224, 224), proj_type='conv', dropout_rate=0.2, hidden_size=hidden_size_train, mlp_dim=mlp_size_train)
 
     recon_loss = nn.MSELoss(reduction='mean')
     ssim = SSIMLoss(spatial_dims=2, data_range=1.0)
@@ -166,4 +175,4 @@ if __name__ == "__main__":
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
     trained_model = train_ssl(
-        model, train_loader, val_loader, optimizer, criterion, epochs=500, patience=10)
+        model, train_loader, val_loader, optimizer, criterion, epochs=500, patience=15)

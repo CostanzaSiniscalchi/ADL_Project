@@ -98,7 +98,7 @@ class MRIDataLoader(Dataset):
             masked_index = np.random.randint(0, len(numpy_data))
             # Create random binary mask with 40% of voxels zeroed out
             if self.mask_ratio == 'random':
-                ratio = np.random.uniform(0.25, 0.75)
+                ratio = np.random.uniform(0.25, 0.5)
             else:
                 ratio = self.mask_ratio
             mask = np.random.rand(
