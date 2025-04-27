@@ -6,92 +6,54 @@ from torch.utils.data import DataLoader
 import copy
 from tqdm import tqdm
 import numpy as np
-from data_loader_ssl import MRISliceDataLoader, split_data
-from monai.networks.nets import ViTAutoEnc
+from data_loader_ssl import MRISliceGeneratorDataLoader, split_data
+from model import ViTAutoEnc
 from monai.transforms import RandGaussianNoise, RandAffine, Compose, ScaleIntensity, ToTensor
 from monai.losses import SSIMLoss
 import cv2
 from monai.transforms import Compose, NormalizeIntensity, Resize, ToTensor, RandFlip, RandAffine, RandGaussianNoise
 import sys
+import math
+from monai.networks.blocks.patchembedding import PatchEmbeddingBlock
+from monai.networks.layers import Conv
 
 hidden_size_train = int(768)
 mlp_size_train = int(3072)
 
-recon_loss = nn.MSELoss(reduction='mean')
-ssim = SSIMLoss(spatial_dims=2, data_range=1.0)
 
-
-def loss_function(recon_x, x,):
-    mse = recon_loss(recon_x, x)
-    ssim_loss = ssim(recon_x, x)
-    return 0.5*mse + 0.5*ssim_loss
-
-
-def weighted_loss_function(recon_batch, scans, original, masked_index, lambda_masked=2.0, lambda_unmasked=1.0):
-    """
-    Computes a weighted loss focusing more on masked slices for (B, 3, 224, 224) inputs.
-    """
-    batch_size, num_slices, H, W = scans.shape
-
-    mse_loss = nn.MSELoss(reduction='none')
-    ssim_loss_fn = SSIMLoss(spatial_dims=2, data_range=1.0)
-
-    total_loss = 0.0
-
-    for b in range(batch_size):
-        for s in range(num_slices):
-            # masked slice for this batch element
-            if s == masked_index[b].item():
-                weight = lambda_masked
-            else:
-                weight = lambda_unmasked
-
-            # MSE between predicted and original slice
-            mse = mse_loss(recon_batch[b, s], original[b, s]).mean()
-
-            # SSIM between predicted and original slice
-            ssim_loss = ssim_loss_fn(
-                recon_batch[b, s].unsqueeze(0), original[b, s].unsqueeze(0))  # Need batch dim
-
-            total_loss += weight * (0.5 * mse + 0.5 * ssim_loss)
-
-    total_loss /= (batch_size * num_slices)
-    return total_loss
-
-
-def make_viz(epoch, save_dir, count, original, scans, preds):
+def make_viz(epoch, save_dir, count, targets, inputs, preds):
     save_viz_dir = os.path.join(save_dir, 'viz_val/')
     os.makedirs(save_viz_dir, exist_ok=True)
 
     batch_ind = 0
 
-    rows = []
-    for s in range(3):  # For each of the 3 scans
-        orig_slice = original[batch_ind, s].cpu().numpy()
-        scan_slice = scans[batch_ind, s].cpu().numpy()
-        pred_slice = preds[batch_ind, s].cpu().detach().numpy()
+    first_slice = inputs[batch_ind, 0].cpu().numpy()
+    second_slice = inputs[batch_ind, 1].cpu().numpy()
+    third_slice = inputs[batch_ind, 2].cpu().numpy()
+    fourth_slice = inputs[batch_ind, 3].cpu().numpy()
+    fifth_slice = targets[batch_ind, 0].cpu().numpy()
+    fifth_pred_slice = preds[batch_ind, 0].cpu().detach().numpy()
 
-        # Normalize each slice to [0, 255] for display
-        def normalize(img):
-            # img = (img - img.min()) / (img.max() - img.min() + 1e-5)
-            img = np.clip(img, 0.0, 1.0)
-            return (img * 255).astype(np.uint8)
+    # Normalize each slice to [0, 255] for display
+    def normalize(img):
+        # img = (img - img.min()) / (img.max() - img.min() + 1e-5)
+        img = np.clip(img, 0.0, 1.0)
+        return (img * 255).astype(np.uint8)
 
-        row = np.concatenate([
-            normalize(scan_slice),
-            normalize(orig_slice),
-            normalize(pred_slice)
-        ], axis=1)  # horizontally stack [input | target | prediction]
-        rows.append(row)
+    row = np.concatenate([
+        normalize(first_slice),
+        normalize(second_slice),
+        normalize(third_slice),
+        normalize(fourth_slice),
+        normalize(fifth_slice),
+        normalize(fifth_pred_slice),
+    ], axis=1)  # horizontally stack [input | target | prediction]
 
-    # vertically stack 3 scan slices
-    final_image = np.concatenate(rows, axis=0)
     save_path = os.path.join(save_viz_dir, f"epoch_{epoch}_sample_{count}.png")
-    cv2.imwrite(save_path, final_image)
+    cv2.imwrite(save_path, row)
 
 
-def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50, patience=5, scheduler=None):
-    model.to(device)
+def train_pred(model, dataloader, val_dataloader, optimizer, criterion, epochs=50, patience=5, scheduler=None):
     best_val_loss = float('inf')
     best_model_wts = copy.deepcopy(model.state_dict())
     epochs_no_improve = 0
@@ -100,15 +62,13 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
         total_loss = 0
         model.train()
         for batch in tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}"):
-            scans = batch["numpy"].to(device)        # (B, 3, 224, 224)
-            original = batch["original"].to(device)  # (B, 3, 224, 224)
+            inputs = batch["input"].to(device)        # (B, 4, 32, 256, 240)
+            targets = batch["target"].to(device)  # (B, 1, 32, 256, 240)
 
-            recon_batch, hidden_states = model(scans)
+            recon_batch, hidden_states = model(inputs)
             # recon_batch = torch.sigmoid(recon_batch)
-            masked_index = batch["masked_index"]
 
-            loss = criterion(recon_batch, original)
-            # loss = criterion(recon_batch, scans, original, masked_index)
+            loss = criterion(recon_batch, targets)
 
             optimizer.zero_grad()
             loss.backward()
@@ -123,17 +83,18 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
         val_loss = 0
         with torch.no_grad():
             for batch in val_dataloader:
-                scans = batch["numpy"].to(device)
-                original = batch["original"].to(device)
+                # (B, 4, 32, 256, 240)
+                inputs = batch["input"].to(device)
+                targets = batch["target"].to(device)  # (B, 1, 32, 256, 240)
 
-                recon, hidden_states = model(scans)
+                recon_batch, hidden_states = model(inputs)
                 # recon = torch.sigmoid(recon)
                 # sum up batch loss
-                loss = criterion(recon, original)
+                loss = criterion(recon_batch, targets)
                 # visualize on first step:
                 if val_loss == 0:
-                    make_viz(epoch, f'./training_runs/vitvae_{hidden_size_train}_{mlp_size_train}', 0,
-                             original, scans, recon)
+                    make_viz(epoch, f'./training_runs/pred_vitvae_{hidden_size_train}_{mlp_size_train}', 0,
+                             targets, inputs, recon_batch)
                 val_loss += loss.item()
         avg_val_loss = val_loss / len(val_dataloader)
 
@@ -152,7 +113,7 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
                 'model_state_dict': best_model_wts,
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': best_val_loss,
-            }, f'./training_runs/vitvae_{hidden_size_train}_{mlp_size_train}/best_{hidden_size_train}_{mlp_size_train}.pt')
+            }, f'./training_runs/pred_vitvae_{hidden_size_train}_{mlp_size_train}/best_{hidden_size_train}_{mlp_size_train}.pt')
             epochs_no_improve = 0
         elif epoch > 10:
             epochs_no_improve += 1
@@ -166,12 +127,12 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
 
 
 if __name__ == "__main__":
-    exp_dir = f'./training_runs/vitvae_{hidden_size_train}_{mlp_size_train}/'
+    exp_dir = f'./training_runs/pred_vitvae_{hidden_size_train}_{mlp_size_train}/'
     os.makedirs(exp_dir, exist_ok=True)
     sys.stdout = open(
-        f'./training_runs/vitvae_{hidden_size_train}_{mlp_size_train}/log_{hidden_size_train}_{mlp_size_train}.log', 'w')
+        f'./training_runs/pred_vitvae_{hidden_size_train}_{mlp_size_train}/log_{hidden_size_train}_{mlp_size_train}.log', 'w')
     sys.stderr = sys.stdout
-    device = torch.device("cuda:1")
+    device = torch.device("cuda:0")
 
     ssl_transforms = Compose([
         lambda x: x[np.newaxis, ...],  # (1, H, W)
@@ -190,12 +151,12 @@ if __name__ == "__main__":
         lambda x: x.squeeze(0)
     ])
 
-    data_root = '../data/stripped_3_scans_slices/'
+    data_root = '../data/stripped_5_scans_slices/'
     train_ids, test_ids, val_ids = split_data(os.listdir(data_root))
 
-    train_set = MRISliceDataLoader(data_root, train_ids,
-                                   transform=ssl_transforms, mask_scan='random', mask_ratio='random')
-    val_set = MRISliceDataLoader(
+    train_set = MRISliceGeneratorDataLoader(data_root, train_ids,
+                                            transform=ssl_transforms, mask_scan='random', mask_ratio='random')
+    val_set = MRISliceGeneratorDataLoader(
         data_root, val_ids, transform=val_transforms, mask_scan='random', mask_ratio='random')
 
     train_loader = DataLoader(train_set, batch_size=8,
@@ -206,10 +167,40 @@ if __name__ == "__main__":
     model = ViTAutoEnc(in_channels=3, out_channels=3, patch_size=(16, 16), spatial_dims=2,
                        img_size=(224, 224), proj_type='conv', dropout_rate=0.2, hidden_size=hidden_size_train, mlp_dim=mlp_size_train)
 
-    # criterion = weighted_loss_function
-    criterion = loss_function
+    # load the state
+    state = torch.load(f'./training_runs/vitvae_{hidden_size_train}_{mlp_size_train}/best_{hidden_size_train}_{mlp_size_train}.pt',
+                       weights_only=True, map_location=device)
+    model.load_state_dict(state['model_state_dict'], strict=False)
 
+    # now change to be 4 channel input and 1 channel output
+    model.patch_embedding = PatchEmbeddingBlock(
+        in_channels=4,
+        img_size=(224, 224),
+        patch_size=(16, 16),
+        num_heads=12,
+        proj_type='conv',
+        dropout_rate=0.2,
+        spatial_dims=2,
+        hidden_size=hidden_size_train,
+    )
+    conv_trans = Conv[Conv.CONVTRANS, model.spatial_dims]
+    up_kernel_size = [int(math.sqrt(i)) for i in model.patch_size]
+    model.conv3d_transpose_1 = conv_trans(
+        in_channels=16, out_channels=1, kernel_size=up_kernel_size, stride=up_kernel_size
+    )
+
+    model.to(device)
+
+    recon_loss = nn.MSELoss(reduction='mean')
+    ssim = SSIMLoss(spatial_dims=2, data_range=1.0)
+
+    def loss_function(recon_x, x,):
+        mse = recon_loss(recon_x, x)
+        ssim_loss = ssim(recon_x, x)
+        return 0.5*mse + 0.5*ssim_loss
+
+    criterion = loss_function
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
-    trained_model = train_ssl(
+    trained_model = train_pred(
         model, train_loader, val_loader, optimizer, criterion, epochs=500, patience=15)

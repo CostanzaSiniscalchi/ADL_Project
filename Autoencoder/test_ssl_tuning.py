@@ -11,8 +11,41 @@ from monai.losses import SSIMLoss
 from data_loader_ssl import MRIDataLoader, split_data
 from model import ViTAutoEnc
 from train_ssl_ViTVAE import train_ssl
+import numpy as np
+import cv2
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def make_viz(save_dir, count, original, scans, preds):
+    os.makedirs(save_dir, exist_ok=True)
+
+    mid_slice = original.shape[2] // 2  # middle depth slice (axis=2 is depth)
+    for batch_ind in range(len(original)):
+        rows = []
+        for s in range(3):  # For each of the 3 scans
+            orig_slice = original[batch_ind, s, mid_slice].cpu().numpy()
+            scan_slice = scans[batch_ind, s, mid_slice].cpu().numpy()
+            pred_slice = preds[batch_ind, s, mid_slice].cpu().detach().numpy()
+
+            # Normalize each slice to [0, 255] for display
+            def normalize(img):
+                # img = (img - img.min()) / (img.max() - img.min() + 1e-5)
+                img = np.clip(img, 0.0, 1.0)
+                return (img * 255).astype(np.uint8)
+
+            row = np.concatenate([
+                normalize(scan_slice),
+                normalize(orig_slice),
+                normalize(pred_slice)
+            ], axis=1)  # horizontally stack [input | target | prediction]
+            rows.append(row)
+
+        # vertically stack 3 scan slices
+        final_image = np.concatenate(rows, axis=0)
+        save_path = os.path.join(save_dir, f"sample_{count}_b_{batch_ind}.png")
+        cv2.imwrite(save_path, final_image)
+
 
 # === Fixed Constants ===
 data_root = '../data/stripped_3_scans/'
@@ -41,16 +74,23 @@ val_transforms = Compose([
 recon_loss = nn.MSELoss(reduction='mean')
 ssim = SSIMLoss(spatial_dims=3, data_range=1.0)
 
+
 def loss_fn(recon_x, x):
     return 0.5 * recon_loss(recon_x, x) + 0.5 * ssim(recon_x, x)
 
+
 # === Predefined Trials ===
+# predefined_trials_roshan = [
+#     {"hidden_size": 256, "mlp_dim": 1024, "num_layers": 4, "dropout": 0.10},
+#     {"hidden_size": 256, "mlp_dim": 2048, "num_layers": 8, "dropout": 0.15},
+#     {"hidden_size": 512, "mlp_dim": 1024, "num_layers": 4, "dropout": 0.20},
+#     {"hidden_size": 512, "mlp_dim": 2048, "num_layers": 8, "dropout": 0.10},
+#     {"hidden_size": 256, "mlp_dim": 2048, "num_layers": 4, "dropout": 0.15}
+# ]
 predefined_trials_roshan = [
-    {"hidden_size": 256, "mlp_dim": 1024, "num_layers": 4, "dropout": 0.10},
-    {"hidden_size": 256, "mlp_dim": 2048, "num_layers": 8, "dropout": 0.15},
-    {"hidden_size": 512, "mlp_dim": 1024, "num_layers": 4, "dropout": 0.20},
-    {"hidden_size": 512, "mlp_dim": 2048, "num_layers": 8, "dropout": 0.10},
-    {"hidden_size": 256, "mlp_dim": 2048, "num_layers": 4, "dropout": 0.15}
+    {"hidden_size": 768, "mlp_dim": 3072, "num_layers": 12, "dropout": 0.20},
+    {"hidden_size": 1152, "mlp_dim": 3072, "num_layers": 12, "dropout": 0.20},
+    {"hidden_size": 1536, "mlp_dim": 3072, "num_layers": 12, "dropout": 0.20},
 ]
 
 predefined_trials_sana = [
@@ -61,15 +101,9 @@ predefined_trials_sana = [
     {"hidden_size": 512, "mlp_dim": 1024, "num_layers": 4, "dropout": 0.15}
 ]
 
-#Set the trials here - 
+# Set the trials here -
 predefined_trials = predefined_trials_roshan
 
-os.makedirs("optuna_results", exist_ok=True)
-result_file = f"optuna_results/optuna_results_fixed_2.csv"
-
-with open(result_file, "w", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow(["trial", "params", "val_loss"])
 
 # === Objective Function for Optuna ===
 def objective(trial):
@@ -85,14 +119,15 @@ def objective(trial):
 
     trial_name = f"ViTAE_{trial_id}_h{hidden_size}_m{mlp_dim}_l{num_layers}_d{int(dropout*10)}"
 
+    test_viz_dir = os.path.join('./test_viz/', trial_name)
+
     print(f"\n[Trial {trial_id}] {trial_name} STARTED")
 
     # Load Datasets
-    train_set = MRIDataLoader(data_root, train_ids, transform=train_transforms, mask_scan='random', mask_ratio=mask_ratio)
-    val_set = MRIDataLoader(data_root, val_ids, transform=val_transforms, mask_scan='random', mask_ratio=mask_ratio)
-
-    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
-    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
+    test_set = MRIDataLoader(data_root, test_ids, transform=val_transforms,
+                             mask_scan='random', mask_ratio=mask_ratio)
+    test_loader = DataLoader(test_set, batch_size=batch_size,
+                             shuffle=False, num_workers=4, pin_memory=True)
 
     # Model
     model = ViTAutoEnc(
@@ -109,49 +144,29 @@ def objective(trial):
         num_heads=fixed_num_heads,
     ).to(device)
 
-    optimizer = optim.Adam(model.parameters(), lr=1e-4)
-
-    # Train
-    model = train_ssl(
-        model,
-        train_loader,
-        val_loader,
-        optimizer,
-        loss_fn,
-        epochs=400,
-        patience=15,
-        trial_name=trial_name)
-
-    # Save Model
     os.makedirs("models_optuna", exist_ok=True)
     model_path = os.path.join("models_optuna", f"{trial_name}.pt")
-    torch.save(model.state_dict(), model_path)
-    print(f"[Trial {trial_id}] DONE — model saved at {model_path}")
+    model.load_state_dict(torch.load(model_path))
+
+    optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
     # Evaluate
     model.eval()
-    val_loss = 0.0
+    count = 0
     with torch.no_grad():
-        for batch in val_loader:
+        for batch in test_loader:
             scans = batch["numpy"].to(device)
             original = batch["original"].to(device)
             recon, _ = model(scans)
-            val_loss += loss_fn(recon, original).item()
 
-    avg_val_loss = val_loss / len(val_loader)
+            make_viz(test_viz_dir, count, original, scans, recon)
+            count += 1
 
-    # --- IMMEDIATE SAVE after trial ---
-    with open(result_file, "a", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([trial_id, params, avg_val_loss])
-
-    print(f"[Trial {trial_id}] Logged result — val_loss={avg_val_loss:.6f}")
-
-    return avg_val_loss
 
 # === Main Optuna Execution ===
 if __name__ == "__main__":
     study = optuna.create_study(direction="minimize")
-    study.optimize(objective, n_trials=len(predefined_trials), show_progress_bar=True)
+    study.optimize(objective, n_trials=len(
+        predefined_trials), show_progress_bar=True)
 
     print("✅ All trials completed.")
