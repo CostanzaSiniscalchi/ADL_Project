@@ -132,7 +132,7 @@ if __name__ == "__main__":
     sys.stdout = open(
         f'./training_runs/pred_vitvae_{hidden_size_train}_{mlp_size_train}/log_{hidden_size_train}_{mlp_size_train}.log', 'w')
     sys.stderr = sys.stdout
-    device = torch.device("cuda:1")
+    device = torch.device("cuda:0")
 
     ssl_transforms = Compose([
         lambda x: x[np.newaxis, ...],  # (1, H, W)
