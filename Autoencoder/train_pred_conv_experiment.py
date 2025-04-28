@@ -17,8 +17,7 @@ import math
 from monai.networks.blocks.patchembedding import PatchEmbeddingBlock
 from monai.networks.layers import Conv
 
-hidden_size_train = int(768)
-mlp_size_train = int(3072)
+
 
 
 def make_viz(epoch, save_dir, count, targets, inputs, preds):
@@ -66,6 +65,11 @@ def train_pred(model, dataloader, val_dataloader, optimizer, criterion, epochs=5
             targets = batch["target"].to(device)  # (B, 1, 32, 256, 240)
 
             recon_batch, hidden_states = model(inputs)
+
+            recon_batch, hidden_states = model(inputs)
+            recon_batch = model.relu(model.decoder_conv1(recon_batch))
+            recon_batch = model.relu(model.decoder_conv2(recon_batch))
+            recon_batch = model.decoder_conv3(recon_batch)
             # recon_batch = torch.sigmoid(recon_batch)
 
             loss = criterion(recon_batch, targets)
@@ -88,12 +92,17 @@ def train_pred(model, dataloader, val_dataloader, optimizer, criterion, epochs=5
                 targets = batch["target"].to(device)  # (B, 1, 32, 256, 240)
 
                 recon_batch, hidden_states = model(inputs)
+                recon_batch = model.relu(model.decoder_conv1(recon_batch))
+                recon_batch = model.relu(model.decoder_conv2(recon_batch))
+                recon_batch = model.decoder_conv3(recon_batch)
+
+                
                 # recon = torch.sigmoid(recon)
                 # sum up batch loss
                 loss = criterion(recon_batch, targets)
                 # visualize on first step:
                 if val_loss == 0:
-                    make_viz(epoch, f'./training_runs/pred_vitvae_{hidden_size_train}_{mlp_size_train}', 0,
+                    make_viz(epoch, f'./training_runs_conv/pred_vitvae_{hidden_size_train}_{mlp_size_train}', 0,
                              targets, inputs, recon_batch)
                 val_loss += loss.item()
         avg_val_loss = val_loss / len(val_dataloader)
@@ -113,7 +122,7 @@ def train_pred(model, dataloader, val_dataloader, optimizer, criterion, epochs=5
                 'model_state_dict': best_model_wts,
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': best_val_loss,
-            }, f'./training_runs/pred_vitvae_{hidden_size_train}_{mlp_size_train}/best_{hidden_size_train}_{mlp_size_train}.pt')
+            }, f'./training_runs_conv/pred_vitvae_{hidden_size_train}_{mlp_size_train}/best_{hidden_size_train}_{mlp_size_train}.pt')
             epochs_no_improve = 0
         elif epoch > 10:
             epochs_no_improve += 1
@@ -127,9 +136,11 @@ def train_pred(model, dataloader, val_dataloader, optimizer, criterion, epochs=5
 
 
 if __name__ == "__main__":
+    hidden_size_train = int(768)
+    mlp_size_train = int(3072)
     
-    # exp_dir = f'./training_runs/pred_vitvae_{hidden_size_train}_{mlp_size_train}/'
-    # os.makedirs(exp_dir, exist_ok=True)
+    exp_dir = f'./training_runs_conv/pred_vitvae_{hidden_size_train}_{mlp_size_train}/'
+    os.makedirs(exp_dir, exist_ok=True)
     # sys.stdout = open(
     #     f'./training_runs/pred_vitvae_{hidden_size_train}_{mlp_size_train}/log_{hidden_size_train}_{mlp_size_train}.log', 'w')
     # sys.stderr = sys.stdout
@@ -154,6 +165,7 @@ if __name__ == "__main__":
         lambda x: x.squeeze(0)
     ])
 
+    print("yo")
 
     
 
@@ -197,6 +209,11 @@ if __name__ == "__main__":
     model.conv3d_transpose_1 = conv_trans(
         in_channels=16, out_channels=1, kernel_size=up_kernel_size, stride=up_kernel_size
     )
+
+    model.decoder_conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
+    model.decoder_conv2 = nn.Conv2d(32, 16, kernel_size=3, padding=1)
+    model.decoder_conv3 = nn.Conv2d(16, 1, kernel_size=3, padding=1)
+    model.relu = nn.ReLU()
 
     model.to(device)
 

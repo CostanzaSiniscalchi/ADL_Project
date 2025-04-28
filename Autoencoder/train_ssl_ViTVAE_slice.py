@@ -14,8 +14,6 @@ import cv2
 from monai.transforms import Compose, NormalizeIntensity, Resize, ToTensor, RandFlip, RandAffine, RandGaussianNoise
 import sys
 
-hidden_size_train = int(768)
-mlp_size_train = int(3072)
 
 recon_loss = nn.MSELoss(reduction='mean')
 ssim = SSIMLoss(spatial_dims=2, data_range=1.0)
@@ -166,6 +164,8 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
 
 
 if __name__ == "__main__":
+    hidden_size_train = int(768)
+    mlp_size_train = int(3072)
     exp_dir = f'./training_runs/vitvae_{hidden_size_train}_{mlp_size_train}/'
     os.makedirs(exp_dir, exist_ok=True)
     sys.stdout = open(
