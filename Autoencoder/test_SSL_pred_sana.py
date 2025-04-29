@@ -15,20 +15,21 @@ from monai.networks.layers import Conv
 import math
 
 
+def make_viz_ssl(epoch, save_dir, count, original, scans, preds):
+    save_viz_dir = os.path.join(save_dir, 'viz_test_ssl/')
+    os.makedirs(save_viz_dir, exist_ok=True)
 
-
-def make_viz(save_dir, count, original, scans, preds):
-    os.makedirs(save_dir, exist_ok=True)
     batch_ind = 0
-    mid_slice = original.shape[2] // 2
 
     rows = []
-    for s in range(scans.shape[1]):
-        orig_slice = original[batch_ind, s, mid_slice].cpu().numpy()
-        scan_slice = scans[batch_ind, s, mid_slice].cpu().numpy()
-        pred_slice = preds[batch_ind, s, mid_slice].cpu().detach().numpy()
+    for s in range(3):  # For each of the 3 scans
+        orig_slice = original[batch_ind, s].cpu().numpy()
+        scan_slice = scans[batch_ind, s].cpu().numpy()
+        pred_slice = preds[batch_ind, s].cpu().detach().numpy()
 
+        # Normalize each slice to [0, 255] for display
         def normalize(img):
+            # img = (img - img.min()) / (img.max() - img.min() + 1e-5)
             img = np.clip(img, 0.0, 1.0)
             return (img * 255).astype(np.uint8)
 
@@ -36,12 +37,72 @@ def make_viz(save_dir, count, original, scans, preds):
             normalize(scan_slice),
             normalize(orig_slice),
             normalize(pred_slice)
-        ], axis=1)
+        ], axis=1)  # horizontally stack [input | target | prediction]
         rows.append(row)
 
+    # vertically stack 3 scan slices
     final_image = np.concatenate(rows, axis=0)
-    save_path = os.path.join(save_dir, f"sample_{count}.png")
+    save_path = os.path.join(save_viz_dir, f"epoch_{epoch}_sample_{count}.png")
     cv2.imwrite(save_path, final_image)
+
+
+def make_viz_pred(epoch, save_dir, count, targets, inputs, preds):
+    save_viz_dir = os.path.join(save_dir, 'viz_val_pred/')
+    os.makedirs(save_viz_dir, exist_ok=True)
+
+    batch_ind = 0
+
+    first_slice = inputs[batch_ind, 0].cpu().numpy()
+    second_slice = inputs[batch_ind, 1].cpu().numpy()
+    third_slice = inputs[batch_ind, 2].cpu().numpy()
+    fourth_slice = inputs[batch_ind, 3].cpu().numpy()
+    fifth_slice = targets[batch_ind, 0].cpu().numpy()
+    fifth_pred_slice = preds[batch_ind, 0].cpu().detach().numpy()
+
+    # Normalize each slice to [0, 255] for display
+    def normalize(img):
+        # img = (img - img.min()) / (img.max() - img.min() + 1e-5)
+        img = np.clip(img, 0.0, 1.0)
+        return (img * 255).astype(np.uint8)
+
+    row = np.concatenate([
+        normalize(first_slice),
+        normalize(second_slice),
+        normalize(third_slice),
+        normalize(fourth_slice),
+        normalize(fifth_slice),
+        normalize(fifth_pred_slice),
+    ], axis=1)  # horizontally stack [input | target | prediction]
+
+    save_path = os.path.join(save_viz_dir, f"epoch_{epoch}_sample_{count}.png")
+    cv2.imwrite(save_path, row)
+
+
+# def make_viz(save_dir, count, original, scans, preds):
+#     os.makedirs(save_dir, exist_ok=True)
+#     batch_ind = 0
+#     mid_slice = original.shape[2] // 2
+
+#     rows = []
+#     for s in range(scans.shape[1]):
+#         orig_slice = original[batch_ind, s, mid_slice].cpu().numpy()
+#         scan_slice = scans[batch_ind, s, mid_slice].cpu().numpy()
+#         pred_slice = preds[batch_ind, s, mid_slice].cpu().detach().numpy()
+
+#         def normalize(img):
+#             img = np.clip(img, 0.0, 1.0)
+#             return (img * 255).astype(np.uint8)
+
+#         row = np.concatenate([
+#             normalize(scan_slice),
+#             normalize(orig_slice),
+#             normalize(pred_slice)
+#         ], axis=1)
+#         rows.append(row)
+
+#     final_image = np.concatenate(rows, axis=0)
+#     save_path = os.path.join(save_dir, f"sample_{count}.png")
+#     cv2.imwrite(save_path, final_image)
 
 def test_ssl(model, test_dataloader, device):
     model.to(device)
@@ -67,7 +128,8 @@ def test_ssl(model, test_dataloader, device):
             total_ssim += calculate_ssim(recon_batch, original)
             total_msssim += calculate_ms_ssim(recon_batch, original)
 
-            #make_viz('./testing_viz_vit_do_nosig_random/', count, original, scans, recon_batch)
+            make_viz_ssl(0, './test_viz', count, original, scans, recon_batch)
+            
             count += 1
             num_batches += 1
 
@@ -113,6 +175,8 @@ def test_prediction(model, test_dataloader, device):
             total_generated_samples += batch_total
             num_batches +=1
 
+            make_viz_pred(0,'./test_viz', num_batches, targets, inputs, preds)
+
     print(f"MS-SSIM: {total_msssim / num_batches:.4f}")
     print(f"SSIM:    {total_ssim / num_batches:.4f}")
     print(f"LPIPS:   {total_lpips / num_batches:.4f}")
@@ -153,7 +217,7 @@ if __name__ == "__main__":
     state = torch.load('best_768_3072.pt', map_location=device)
     model_ssl.load_state_dict(state['model_state_dict'])
 
-    test_ssl(model_ssl, test_loader_ssl, device)
+    #test_ssl(model_ssl, test_loader_ssl, device)
 
     # Prediction task testing
     data_root_pred = '../stripped_5_scans_slices/'
