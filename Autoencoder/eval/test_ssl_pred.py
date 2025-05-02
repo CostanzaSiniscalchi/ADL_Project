@@ -9,7 +9,7 @@ import cv2
 from data_loader_ssl import MRIDataLoader, MRIGenerationLoader, split_data, MRISliceDataLoader, MRISliceGeneratorDataLoader
 from monai.networks.nets import ViTAutoEnc
 from monai.transforms import Compose, ScaleIntensity, ToTensor, Resize
-from eval_utils import calculate_lpips, calculate_mmd, calculate_coverage, calculate_ms_ssim, calculate_ssim
+from Autoencoder.eval.eval_utils import calculate_lpips, calculate_mmd, calculate_coverage, calculate_ms_ssim, calculate_ssim
 from monai.networks.blocks.patchembedding import PatchEmbeddingBlock
 from monai.networks.layers import Conv
 import math
@@ -194,7 +194,7 @@ if __name__ == "__main__":
     lambda x: x.squeeze(0)
     ])
 
-    data_root_ssl = '../stripped_3_scans_slices/'
+    data_root_ssl = '../../data/stripped_3_scans_slices/'
     train_ids, test_ids, val_ids = split_data(os.listdir(data_root_ssl))
 
 
@@ -220,7 +220,7 @@ if __name__ == "__main__":
     #test_ssl(model_ssl, test_loader_ssl, device)
 
     # Prediction task testing
-    data_root_pred = '../stripped_5_scans_slices/'
+    data_root_pred = '../../data/stripped_5_scans_slices/'
 
 
     test_set_pred = MRISliceGeneratorDataLoader(data_root_pred, test_ids, transform=test_transforms, mask_scan='random', mask_ratio='random')
