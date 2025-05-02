@@ -12,23 +12,25 @@ from monai.transforms import RandGaussianNoise, RandAffine, Compose, ScaleIntens
 from monai.losses import SSIMLoss
 from monai.networks.blocks.patchembedding import PatchEmbeddingBlock
 from monai.networks.layers import Conv
-from data_loader_ssl import MRIGenerationLoader, split_data
+from data_loader_ssl import MRISliceGeneratorDataLoader, split_data
 from model import ViTAutoEnc
 
 # === Setup ===
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-data_root = '../data/stripped_5_scans/'
+data_root = '../../data/stripped_5_scans_slices/'
 train_ids, test_ids, val_ids = split_data(os.listdir(data_root))
 val_transforms = Compose([ScaleIntensity(minv=0.0, maxv=1.0), ToTensor()])
 recon_loss = nn.MSELoss(reduction='mean')
 ssim = SSIMLoss(spatial_dims=3, data_range=1.0)
 
-# === Loss Function ===
+# Loss Function 
 def loss_fn(recon_x, x):
     return 0.5 * recon_loss(recon_x, x) + 0.5 * ssim(recon_x, x)
 
-# === Objective Function for Optuna ===
+# Objective Function for Optuna
 def objective(trial):
+    # Sample hyperparameters from predefined or log-uniform distributions
+
     dropout_rate = trial.suggest_categorical("dropout_rate", [0.0, 0.1, 0.2])
     batch_size = trial.suggest_categorical("batch_size", [4, 8, 12])
     learning_rate = trial.suggest_float("lr", 1e-5, 1e-3, log=True)
@@ -39,8 +41,8 @@ def objective(trial):
         RandAffine(prob=0.3, rotate_range=(0.05, 0.05, 0.05)),
         ToTensor()
     ])
-    train_set = MRIGenerationLoader(data_root, train_ids, transform=train_transforms)
-    val_set = MRIGenerationLoader(data_root, val_ids, transform=val_transforms)
+    train_set = MRISliceGeneratorDataLoader(data_root, train_ids, transform=train_transforms)
+    val_set = MRISliceGeneratorDataLoader(data_root, val_ids, transform=val_transforms)
 
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
@@ -56,7 +58,7 @@ def objective(trial):
         dropout_rate=dropout_rate
     )
 
-    #CHANGE PATH HERE
+    # Load in pretrained model here 
     if os.path.exists('./best_ViTVAE.pt'):
         state = torch.load('./best_ViTVAE.pt', map_location=device)
         model.load_state_dict(state['model_state_dict'], strict=False)
@@ -71,6 +73,9 @@ def objective(trial):
             dropout_rate=dropout_rate,
             spatial_dims=3,
         )
+
+         # Reinitialize final decoder (ConvTranspose3D) for correct output dimensions
+
         conv_trans = Conv[Conv.CONVTRANS, model.spatial_dims]
         up_kernel_size = [int(math.sqrt(i)) for i in model.patch_size]
         model.conv3d_transpose_1 = conv_trans(
@@ -84,6 +89,7 @@ def objective(trial):
     epochs_no_improve = 0
     best_model_wts = model.state_dict()
 
+    # Training Loop
     for epoch in range(500):
         model.train()
         train_loss = 0
@@ -101,6 +107,7 @@ def objective(trial):
 
         avg_train_loss = train_loss / len(train_loader)
 
+         #Validation 
         model.eval()
         val_loss = 0
         with torch.no_grad():
@@ -114,6 +121,7 @@ def objective(trial):
 
         avg_val_loss = val_loss / len(val_loader)
 
+        # Early stopping logic
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             best_model_wts = model.state_dict()
@@ -126,7 +134,7 @@ def objective(trial):
     model.load_state_dict(best_model_wts)
     return best_val_loss
 
-# === Run Optuna Study ===
+# Run Optuna Study 
 if __name__ == "__main__":
     study = optuna.create_study(direction="minimize")
     study.optimize(objective, n_trials=20, show_progress_bar = True)

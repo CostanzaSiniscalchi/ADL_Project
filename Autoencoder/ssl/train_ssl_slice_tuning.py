@@ -1,3 +1,10 @@
+"""
+Filename: train_ssl_slice_tuning.py
+Author: Roshan Kenia & Sanmati Choudhary
+Description: Hyperparameter tuning for SSL task using Optuna and ViTAutoEnc model.
+"""
+
+
 import os
 import time
 import csv
@@ -8,23 +15,22 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from monai.transforms import RandGaussianNoise, RandAffine, Compose, ScaleIntensity, ToTensor
 from monai.losses import SSIMLoss
-from data_loader_ssl import MRIDataLoader, split_data
+from data_loader_ssl import MRISliceDataLoader, split_data
 from model import ViTAutoEnc
-from train_ssl_ViTVAE import train_ssl
+from Autoencoder.ssl.train_ssl_slice import train_ssl
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# === Fixed Constants ===
-data_root = '../data/stripped_3_scans/'
+data_root = '../../data/stripped_3_scans_slices/'
 patch_size = (16, 16, 16)
 mask_ratio = 0.625
 batch_size = 8
-fixed_num_heads = 8  # assuming
+fixed_num_heads = 8  
 
-# === Data Split ===
+# Splitting Data
 train_ids, test_ids, val_ids = split_data(os.listdir(data_root))
 
-# === Preprocessing ===
+# Preprocessing 
 train_transforms = Compose([
     ScaleIntensity(minv=0.0, maxv=1.0),
     RandGaussianNoise(prob=0.2, std=0.01),
@@ -37,14 +43,14 @@ val_transforms = Compose([
     ToTensor()
 ])
 
-# === Loss ===
+# Loss defintions
 recon_loss = nn.MSELoss(reduction='mean')
 ssim = SSIMLoss(spatial_dims=3, data_range=1.0)
 
 def loss_fn(recon_x, x):
     return 0.5 * recon_loss(recon_x, x) + 0.5 * ssim(recon_x, x)
 
-# === Predefined Trials ===
+# Predefined Trials 
 predefined_trials_roshan = [
     {"hidden_size": 256, "mlp_dim": 1024, "num_layers": 4, "dropout": 0.10},
     {"hidden_size": 256, "mlp_dim": 2048, "num_layers": 8, "dropout": 0.15},
@@ -71,7 +77,7 @@ with open(result_file, "w", newline="") as f:
     writer = csv.writer(f)
     writer.writerow(["trial", "params", "val_loss"])
 
-# === Objective Function for Optuna ===
+# Objective Function for Optuna 
 def objective(trial):
     trial_id = trial.number
     if trial_id >= len(predefined_trials):
@@ -88,8 +94,8 @@ def objective(trial):
     print(f"\n[Trial {trial_id}] {trial_name} STARTED")
 
     # Load Datasets
-    train_set = MRIDataLoader(data_root, train_ids, transform=train_transforms, mask_scan='random', mask_ratio=mask_ratio)
-    val_set = MRIDataLoader(data_root, val_ids, transform=val_transforms, mask_scan='random', mask_ratio=mask_ratio)
+    train_set = MRISliceDataLoader(data_root, train_ids, transform=train_transforms, mask_scan='random', mask_ratio=mask_ratio)
+    val_set = MRISliceDataLoader(data_root, val_ids, transform=val_transforms, mask_scan='random', mask_ratio=mask_ratio)
 
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
@@ -140,7 +146,7 @@ def objective(trial):
 
     avg_val_loss = val_loss / len(val_loader)
 
-    # --- IMMEDIATE SAVE after trial ---
+    # IMMEDIATE SAVE after trial incase a trial fails
     with open(result_file, "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([trial_id, params, avg_val_loss])
@@ -149,7 +155,7 @@ def objective(trial):
 
     return avg_val_loss
 
-# === Main Optuna Execution ===
+# Main Optuna Execution
 if __name__ == "__main__":
     study = optuna.create_study(direction="minimize")
     study.optimize(objective, n_trials=len(predefined_trials), show_progress_bar=True)

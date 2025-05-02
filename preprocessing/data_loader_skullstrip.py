@@ -1,3 +1,11 @@
+"""
+Filename: data_loader_skullstrip.py
+Author: Costanza Siniscalchi
+Description: PyTorch Dataset for loading and handling skull-stripped MRI volumes from the preprocessed cache.
+"""
+
+
+
 import itertools
 from torch.utils.data import Dataset
 import torch
@@ -97,7 +105,6 @@ class MRISliceDataLoader(Dataset):
             if len(scan_paths) == self.num_timepoints:
                 for slice_idx in self.middle_slice_indices:
                     examples.append((scan_paths, slice_idx))  # one example = 1 slice from 3 scans
-        # print(len(examples))
         return examples
 
     def __len__(self):

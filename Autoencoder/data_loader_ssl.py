@@ -1,6 +1,8 @@
-# Train Test Val Split
-
-# 80 - 10 - 10 split
+"""
+Filename: data_loader_ssl.py
+Author: Costanza Siniscalchi & Roshan Kenia
+Description: Custom PyTorch Dataset and utilities for loading longitudinal MRI slices for SSL and prediction.
+"""
 
 import itertools
 from torch.utils.data import Dataset
@@ -181,7 +183,6 @@ class MRISliceGeneratorDataLoader(Dataset):
         # Convert list to tensor: [5, H, W]
         original_data = np.stack(original_slices, axis=0)
 
-        # need to clip??
         original_data = np.clip(original_data, 0.0, 1.0)
 
         input_seq = original_data[:4]

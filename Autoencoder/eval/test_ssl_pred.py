@@ -1,3 +1,10 @@
+"""
+Filename: test_ssl_pred.py
+Author: Sanmati Choudhary & Roshan Kenia
+Description: Evaluation script for SSL and prediction tasks on longitudinal MRI data.
+"""
+
+
 import os
 import torch
 import torch.nn as nn
@@ -6,7 +13,7 @@ from torch.utils.data import DataLoader
 import numpy as np
 from tqdm import tqdm
 import cv2
-from data_loader_ssl import MRIDataLoader, MRIGenerationLoader, split_data, MRISliceDataLoader, MRISliceGeneratorDataLoader
+from data_loader_ssl import split_data, MRISliceDataLoader, MRISliceGeneratorDataLoader
 from monai.networks.nets import ViTAutoEnc
 from monai.transforms import Compose, ScaleIntensity, ToTensor, Resize
 from Autoencoder.eval.eval_utils import calculate_lpips, calculate_mmd, calculate_coverage, calculate_ms_ssim, calculate_ssim
@@ -14,7 +21,7 @@ from monai.networks.blocks.patchembedding import PatchEmbeddingBlock
 from monai.networks.layers import Conv
 import math
 
-
+# Save SSL reconstruction visualization: [Input | Target | Prediction] for 3 slices.
 def make_viz_ssl(epoch, save_dir, count, original, scans, preds):
     save_viz_dir = os.path.join(save_dir, 'viz_test_ssl/')
     os.makedirs(save_viz_dir, exist_ok=True)
@@ -29,7 +36,6 @@ def make_viz_ssl(epoch, save_dir, count, original, scans, preds):
 
         # Normalize each slice to [0, 255] for display
         def normalize(img):
-            # img = (img - img.min()) / (img.max() - img.min() + 1e-5)
             img = np.clip(img, 0.0, 1.0)
             return (img * 255).astype(np.uint8)
 
@@ -45,6 +51,7 @@ def make_viz_ssl(epoch, save_dir, count, original, scans, preds):
     save_path = os.path.join(save_viz_dir, f"epoch_{epoch}_sample_{count}.png")
     cv2.imwrite(save_path, final_image)
 
+# Save prediction visualization: [T0 | T1 | T2 | T3 | Target T4 | Predicted T4]
 
 def make_viz_pred(epoch, save_dir, count, targets, inputs, preds):
     save_viz_dir = os.path.join(save_dir, 'viz_val_pred/')
@@ -61,7 +68,6 @@ def make_viz_pred(epoch, save_dir, count, targets, inputs, preds):
 
     # Normalize each slice to [0, 255] for display
     def normalize(img):
-        # img = (img - img.min()) / (img.max() - img.min() + 1e-5)
         img = np.clip(img, 0.0, 1.0)
         return (img * 255).astype(np.uint8)
 
@@ -78,32 +84,7 @@ def make_viz_pred(epoch, save_dir, count, targets, inputs, preds):
     cv2.imwrite(save_path, row)
 
 
-# def make_viz(save_dir, count, original, scans, preds):
-#     os.makedirs(save_dir, exist_ok=True)
-#     batch_ind = 0
-#     mid_slice = original.shape[2] // 2
-
-#     rows = []
-#     for s in range(scans.shape[1]):
-#         orig_slice = original[batch_ind, s, mid_slice].cpu().numpy()
-#         scan_slice = scans[batch_ind, s, mid_slice].cpu().numpy()
-#         pred_slice = preds[batch_ind, s, mid_slice].cpu().detach().numpy()
-
-#         def normalize(img):
-#             img = np.clip(img, 0.0, 1.0)
-#             return (img * 255).astype(np.uint8)
-
-#         row = np.concatenate([
-#             normalize(scan_slice),
-#             normalize(orig_slice),
-#             normalize(pred_slice)
-#         ], axis=1)
-#         rows.append(row)
-
-#     final_image = np.concatenate(rows, axis=0)
-#     save_path = os.path.join(save_dir, f"sample_{count}.png")
-#     cv2.imwrite(save_path, final_image)
-
+# Evaluate SSL model on test set: outputs MSE, SSIM, and MS-SSIM metrics.
 def test_ssl(model, test_dataloader, device):
     model.to(device)
     model.eval()
@@ -138,6 +119,7 @@ def test_ssl(model, test_dataloader, device):
     print(f"[SSL] MS-SSIM:    {total_msssim / num_batches:.4f}")
 
 
+# Evaluate prediction model: outputs MS-SSIM, SSIM, LPIPS, and Coverage.
 def test_prediction(model, test_dataloader, device):
     model.to(device)
     model.eval()
@@ -162,11 +144,11 @@ def test_prediction(model, test_dataloader, device):
 
             preds = torch.clamp(preds, 0.0, 1.0)
             targets = torch.clamp(targets, 0.0, 1.0)
+            
 
             total_msssim += calculate_ms_ssim(preds, targets)
             total_ssim += calculate_ssim(preds, targets)
             total_lpips += calculate_lpips(preds, targets)
-            #total_mmd += calculate_mmd(preds, targets)
 
             flat_preds = preds.view(preds.size(0), -1)    # (batch_size, flattened_feature_dim)
             flat_targets = targets.view(targets.size(0), -1)
@@ -180,7 +162,6 @@ def test_prediction(model, test_dataloader, device):
     print(f"MS-SSIM: {total_msssim / num_batches:.4f}")
     print(f"SSIM:    {total_ssim / num_batches:.4f}")
     print(f"LPIPS:   {total_lpips / num_batches:.4f}")
-    print(f"MMD:     {total_mmd:.4f}")
     print(f"Coverage: {total_covered_samples / total_generated_samples:.4f}")
 
 if __name__ == "__main__":
@@ -197,7 +178,7 @@ if __name__ == "__main__":
     data_root_ssl = '../../data/stripped_3_scans_slices/'
     train_ids, test_ids, val_ids = split_data(os.listdir(data_root_ssl))
 
-
+    # Load SSL Model and Dataset
     test_set_ssl = MRISliceDataLoader(data_root_ssl, test_ids,
                                    transform=test_transforms, mask_scan='random', mask_ratio='random')
     test_loader_ssl = DataLoader(test_set_ssl, batch_size=8, shuffle=False, num_workers=4, pin_memory=True)
@@ -213,11 +194,11 @@ if __name__ == "__main__":
     hidden_size=768,
     mlp_dim=3072,
     )
-
+    # Load trained SSL model
     state = torch.load('best_768_3072.pt', map_location=device)
     model_ssl.load_state_dict(state['model_state_dict'])
 
-    #test_ssl(model_ssl, test_loader_ssl, device)
+    test_ssl(model_ssl, test_loader_ssl, device)
 
     # Prediction task testing
     data_root_pred = '../../data/stripped_5_scans_slices/'
@@ -232,6 +213,7 @@ if __name__ == "__main__":
                        img_size=(224, 224), proj_type='conv', dropout_rate=0.2, hidden_size=768, mlp_dim=3072)
 
     
+    # Adapt model for prediction: 4 input channels, 1 output
     model_pred.patch_embedding = PatchEmbeddingBlock(
         in_channels=4,
         img_size=(224, 224),
@@ -247,7 +229,7 @@ if __name__ == "__main__":
     model_pred.conv3d_transpose_1 = conv_trans(
         in_channels=16, out_channels=1, kernel_size=up_kernel_size, stride=up_kernel_size
     )
-
+    # Final decoder head
     model_pred.decoder_conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
     model_pred.decoder_conv2 = nn.Conv2d(32, 16, kernel_size=3, padding=1)
     model_pred.decoder_conv3 = nn.Conv2d(16, 1, kernel_size=3, padding=1)
@@ -256,12 +238,13 @@ if __name__ == "__main__":
     model_pred.to(device)
 
     
-    
+    # Load prediction model weights
+
     state = torch.load('training_runs_conv/pred_vitvae_768_3072/best_768_3072.pt', map_location=device, weights_only=True)
     model_pred.load_state_dict(state['model_state_dict'], strict=False)
     
     model_pred.to(device)
-    
+    # Run Prediction Evaluation
     test_prediction(model_pred, test_loader_pred, device)
 
 

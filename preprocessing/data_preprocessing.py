@@ -1,3 +1,10 @@
+"""
+Filename: data_preprocessing.py
+Author: Sanmati Choudhary
+Description: Converting MRI scans from MINC to Numpy and saving them
+"""
+
+
 import nibabel as nib
 import numpy as np
 import os

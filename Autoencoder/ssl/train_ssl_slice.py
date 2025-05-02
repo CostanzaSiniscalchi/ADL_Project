@@ -1,3 +1,11 @@
+"""
+Filename: train_ssl_slice.py
+Author: Roshan Kenia
+Description: Training script for self-supervised task on reconstructing masked brain MRI slices using ViT.
+"""
+
+
+
 import os
 import torch
 import torch.nn as nn
@@ -18,13 +26,13 @@ import sys
 recon_loss = nn.MSELoss(reduction='mean')
 ssim = SSIMLoss(spatial_dims=2, data_range=1.0)
 
-
+# Combines MSE and SSIM loss equally for reconstruction
 def loss_function(recon_x, x,):
     mse = recon_loss(recon_x, x)
     ssim_loss = ssim(recon_x, x)
     return 0.5*mse + 0.5*ssim_loss
 
-
+# Weighted loss that gives higher importance to the masked slice(s)
 def weighted_loss_function(recon_batch, scans, original, masked_index, lambda_masked=2.0, lambda_unmasked=1.0):
     """
     Computes a weighted loss focusing more on masked slices for (B, 3, 224, 224) inputs.
@@ -56,6 +64,7 @@ def weighted_loss_function(recon_batch, scans, original, masked_index, lambda_ma
     total_loss /= (batch_size * num_slices)
     return total_loss
 
+# Creates and saves a visual comparison of [masked_input | target | prediction] for one batch sample
 
 def make_viz(epoch, save_dir, count, original, scans, preds):
     save_viz_dir = os.path.join(save_dir, 'viz_val/')
@@ -87,6 +96,8 @@ def make_viz(epoch, save_dir, count, original, scans, preds):
     save_path = os.path.join(save_viz_dir, f"epoch_{epoch}_sample_{count}.png")
     cv2.imwrite(save_path, final_image)
 
+# Trains the ViT AutoEncoder model using masked input reconstruction (SSL).
+# Saves best model based on validation loss with early stopping.
 
 def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50, patience=5, scheduler=None):
     model.to(device)
@@ -102,11 +113,9 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
             original = batch["original"].to(device)  # (B, 3, 224, 224)
 
             recon_batch, hidden_states = model(scans)
-            # recon_batch = torch.sigmoid(recon_batch)
             masked_index = batch["masked_index"]
 
             loss = criterion(recon_batch, original)
-            # loss = criterion(recon_batch, scans, original, masked_index)
 
             optimizer.zero_grad()
             loss.backward()
@@ -125,7 +134,6 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
                 original = batch["original"].to(device)
 
                 recon, hidden_states = model(scans)
-                # recon = torch.sigmoid(recon)
                 # sum up batch loss
                 loss = criterion(recon, original)
                 # visualize on first step:
@@ -142,6 +150,8 @@ def train_ssl(model, dataloader, val_dataloader, optimizer, criterion, epochs=50
             scheduler.step(avg_val_loss)
 
         # allow 10 epoch warmup
+        # Save best model after warmup
+
         if avg_val_loss < best_val_loss and epoch > 10:
             best_val_loss = avg_val_loss
             best_model_wts = copy.deepcopy(model.state_dict())
@@ -190,7 +200,7 @@ if __name__ == "__main__":
         lambda x: x.squeeze(0)
     ])
 
-    data_root = '../data/stripped_3_scans_slices/'
+    data_root = '../../data/stripped_3_scans_slices/'
     train_ids, test_ids, val_ids = split_data(os.listdir(data_root))
 
     train_set = MRISliceDataLoader(data_root, train_ids,
@@ -206,7 +216,6 @@ if __name__ == "__main__":
     model = ViTAutoEnc(in_channels=3, out_channels=3, patch_size=(16, 16), spatial_dims=2,
                        img_size=(224, 224), proj_type='conv', dropout_rate=0.2, hidden_size=hidden_size_train, mlp_dim=mlp_size_train)
 
-    # criterion = weighted_loss_function
     criterion = loss_function
 
     optimizer = optim.Adam(model.parameters(), lr=1e-4)

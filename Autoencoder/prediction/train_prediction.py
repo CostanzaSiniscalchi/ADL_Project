@@ -1,3 +1,10 @@
+"""
+Filename: train_prediction.py
+Author: Roshan Kenia & Sanmati Choudhary
+Description: Training script for forecasting future MRI slices using a Vision Transformer AutoEncoder.
+"""
+
+
 import os
 import torch
 import torch.nn as nn
@@ -19,13 +26,14 @@ from monai.networks.layers import Conv
 
 
 
-
+# Visualization Function
 def make_viz(epoch, save_dir, count, targets, inputs, preds):
     save_viz_dir = os.path.join(save_dir, 'viz_val/')
     os.makedirs(save_viz_dir, exist_ok=True)
 
     batch_ind = 0
 
+        # Extract each slice and convert to numpy
     first_slice = inputs[batch_ind, 0].cpu().numpy()
     second_slice = inputs[batch_ind, 1].cpu().numpy()
     third_slice = inputs[batch_ind, 2].cpu().numpy()
@@ -35,7 +43,6 @@ def make_viz(epoch, save_dir, count, targets, inputs, preds):
 
     # Normalize each slice to [0, 255] for display
     def normalize(img):
-        # img = (img - img.min()) / (img.max() - img.min() + 1e-5)
         img = np.clip(img, 0.0, 1.0)
         return (img * 255).astype(np.uint8)
 
@@ -51,7 +58,8 @@ def make_viz(epoch, save_dir, count, targets, inputs, preds):
     save_path = os.path.join(save_viz_dir, f"epoch_{epoch}_sample_{count}.png")
     cv2.imwrite(save_path, row)
 
-
+# Trains the ViT-based model to predict the future scan (T4) from past scans (T0–T3).
+# Uses early stopping and visualizes a sample each epoch.
 def train_pred(model, dataloader, val_dataloader, optimizer, criterion, epochs=50, patience=5, scheduler=None):
     best_val_loss = float('inf')
     best_model_wts = copy.deepcopy(model.state_dict())
@@ -65,12 +73,11 @@ def train_pred(model, dataloader, val_dataloader, optimizer, criterion, epochs=5
             targets = batch["target"].to(device)  # (B, 1, 32, 256, 240)
 
             recon_batch, hidden_states = model(inputs)
-
+            #  Apply decoder head on top of base ViT output
             recon_batch, hidden_states = model(inputs)
             recon_batch = model.relu(model.decoder_conv1(recon_batch))
             recon_batch = model.relu(model.decoder_conv2(recon_batch))
             recon_batch = model.decoder_conv3(recon_batch)
-            # recon_batch = torch.sigmoid(recon_batch)
 
             loss = criterion(recon_batch, targets)
 
@@ -96,8 +103,6 @@ def train_pred(model, dataloader, val_dataloader, optimizer, criterion, epochs=5
                 recon_batch = model.relu(model.decoder_conv2(recon_batch))
                 recon_batch = model.decoder_conv3(recon_batch)
 
-                
-                # recon = torch.sigmoid(recon)
                 # sum up batch loss
                 loss = criterion(recon_batch, targets)
                 # visualize on first step:
@@ -141,9 +146,6 @@ if __name__ == "__main__":
     
     exp_dir = f'./training_runs_conv/pred_vitvae_{hidden_size_train}_{mlp_size_train}/'
     os.makedirs(exp_dir, exist_ok=True)
-    # sys.stdout = open(
-    #     f'./training_runs/pred_vitvae_{hidden_size_train}_{mlp_size_train}/log_{hidden_size_train}_{mlp_size_train}.log', 'w')
-    # sys.stderr = sys.stdout
     device = torch.device("cuda:0")
 
     
@@ -165,12 +167,7 @@ if __name__ == "__main__":
         lambda x: x.squeeze(0)
     ])
 
-    print("yo")
-
-    
-
-
-    data_root = '../stripped_5_scans_slices/'
+    data_root = '../../data/stripped_5_scans_slices/'
     train_ids, test_ids, val_ids = split_data(os.listdir(data_root))
 
     train_set = MRISliceGeneratorDataLoader(data_root, train_ids,
@@ -183,17 +180,18 @@ if __name__ == "__main__":
     val_loader = DataLoader(val_set, batch_size=8,
                             shuffle=False, num_workers=4, pin_memory=True)
 
+
+    # Load and Adapt Pretrained Model
     model = ViTAutoEnc(in_channels=3, out_channels=3, patch_size=(16, 16), spatial_dims=2,
                        img_size=(224, 224), proj_type='conv', dropout_rate=0.2, hidden_size=hidden_size_train, mlp_dim=mlp_size_train)
 
-    # load the state
-    # state = torch.load(f'./training_runs/vitvae_{hidden_size_train}_{mlp_size_train}/best_{hidden_size_train}_{mlp_size_train}.pt',
-    #                    weights_only=True, map_location=device)
+   
 
     state = torch.load(f'best_{hidden_size_train}_{mlp_size_train}.pt', weights_only=True, map_location=device)
     model.load_state_dict(state['model_state_dict'], strict=False)
 
     # now change to be 4 channel input and 1 channel output
+    # Reconfigure model for prediction task
     model.patch_embedding = PatchEmbeddingBlock(
         in_channels=4,
         img_size=(224, 224),
@@ -204,12 +202,14 @@ if __name__ == "__main__":
         spatial_dims=2,
         hidden_size=hidden_size_train,
     )
+    # Add decoder head: 1 channel output after ViT
     conv_trans = Conv[Conv.CONVTRANS, model.spatial_dims]
     up_kernel_size = [int(math.sqrt(i)) for i in model.patch_size]
     model.conv3d_transpose_1 = conv_trans(
         in_channels=16, out_channels=1, kernel_size=up_kernel_size, stride=up_kernel_size
     )
 
+    # Extra Conv layers to refine output
     model.decoder_conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
     model.decoder_conv2 = nn.Conv2d(32, 16, kernel_size=3, padding=1)
     model.decoder_conv3 = nn.Conv2d(16, 1, kernel_size=3, padding=1)
@@ -225,7 +225,6 @@ if __name__ == "__main__":
         ssim_loss = ssim(recon_x, x)
         return 0.5*mse + 0.5*ssim_loss
 
- 
 
     criterion = loss_function
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
